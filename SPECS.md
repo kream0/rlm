@@ -62,4 +62,4 @@ This is NOT a chatbot. This is a programming language come alive - a system that
 - **LLM**: Anthropic Claude API (claude-sonnet-4-5-20250929)
 - **Testing**: Vitest
 - **Build**: tsup or esbuild
-- **Package Manager**: npm
+- **Package Manager**: bun

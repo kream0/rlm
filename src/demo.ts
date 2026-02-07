@@ -7,7 +7,7 @@
  * 3. Memory Manager: Episodic, semantic, procedural memory
  * 4. Merge Strategies: Fan-out/fan-in result combination
  *
- * Run with: npm run demo
+ * Run with: bun run demo
  */
 
 import { ContextStore } from './context-store.js';

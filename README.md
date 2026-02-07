@@ -49,20 +49,20 @@ Key design: AgentRuntime does not drive a REPL loop. Claude Code sub-processes h
 
 ### Prerequisites
 
-- Node.js 18+
+- [Bun](https://bun.sh/)
 - A [Claude Code subscription](https://claude.ai/) (no API key needed)
 
 ### Install
 
 ```bash
-npm install
+bun install
 ```
 
 ### Run a task
 
 ```bash
-npm run dev -- run "Analyze this codebase and summarize its architecture"
-npm run dev -- run "Analyze data" --claude-model opus
+bun run dev -- run "Analyze this codebase and summarize its architecture"
+bun run dev -- run "Analyze data" --claude-model opus
 ```
 
 ## Usage as a Library
@@ -193,17 +193,17 @@ const merged = await spawner.merge(refs, { type: 'structured' });
 ## Scripts
 
 ```bash
-npm run dev -- run "<task>"  # Run a task
-npm run demo                 # Run feature demonstration
-npm run benchmark            # Run performance benchmarks
-npm test                     # Run all tests
-npm run build                # Build for distribution
-npm run lint                 # Type check
+bun run dev -- run "<task>"  # Run a task
+bun run demo                 # Run feature demonstration
+bun run benchmark            # Run performance benchmarks
+bun test                     # Run all tests
+bun run build                # Build for distribution
+bun run lint                 # Type check
 ```
 
 ## Benchmark Results
 
-Run `npm run benchmark` to see full results. Key numbers:
+Run `bun run benchmark` to see full results. Key numbers:
 
 | Metric | Result |
 |--------|--------|

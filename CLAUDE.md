@@ -34,12 +34,12 @@ Key design: AgentRuntime does not drive a REPL loop. Claude Code sub-processes h
 - Zero external dependencies
 
 ## Commands
-- `npm run build` - Build the project
-- `npm test` - Run all tests
-- `npm run lint` - Type check
-- `npm run dev -- run "<task>"` - Run a task via CLI
-- `npm run demo` - Run feature demonstration
-- `npm run benchmark` - Run performance benchmarks
+- `bun run build` - Build the project
+- `bun test` - Run all tests
+- `bun run lint` - Type check
+- `bun run dev -- run "<task>"` - Run a task via CLI
+- `bun run demo` - Run feature demonstration
+- `bun run benchmark` - Run performance benchmarks
 
 ## Code Rules
 - DO NOT use placeholder implementations. Every function must be fully implemented
