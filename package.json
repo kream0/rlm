@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "tsc --noEmit",
-    "demo": "tsx src/demo.ts"
+    "demo": "tsx src/demo.ts",
+    "benchmark": "tsx src/benchmark.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0"
