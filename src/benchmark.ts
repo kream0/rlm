@@ -504,7 +504,7 @@ async function benchMergeStrategies(store: ContextStore): Promise<void> {
   const runtime = new AgentRuntime({
     store,
     registry,
-    apiKey: 'mock-key',
+    provider: { chat: async () => ({ content: [{ type: 'text' as const, text: 'done' }], stopReason: 'end_turn' as const, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }) },
   });
   const spawner = new RecursiveSpawner({
     runtime,
@@ -585,7 +585,7 @@ async function benchSpawningOverhead(store: ContextStore): Promise<void> {
   const runtime = new AgentRuntime({
     store,
     registry,
-    apiKey: 'mock-key',
+    provider: { chat: async () => ({ content: [{ type: 'text' as const, text: 'done' }], stopReason: 'end_turn' as const, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }) },
   });
 
   // 5a: Agent creation overhead

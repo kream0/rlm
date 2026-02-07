@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, mkdir, unlink, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import type {
   IContextStore,
@@ -190,6 +190,23 @@ export class ContextStore implements IContextStore {
     } catch {
       // Directory might not exist
     }
+  }
+
+  async persistForSubAgent(key: string): Promise<string> {
+    const stored = this.variables.get(key);
+    if (!stored) {
+      throw new Error(`Variable not found: ${key}`);
+    }
+    await this.persistVariable(key, stored);
+    return this.getFilePath(key);
+  }
+
+  getStorageDir(): string {
+    return this.storageDir;
+  }
+
+  getFilePath(key: string): string {
+    return resolve(this.storageDir, `${this.sanitizeKey(key)}.json`);
   }
 
   getMemoryUsage(): { currentBytes: number; maxBytes: number; percentage: number } {

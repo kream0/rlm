@@ -6,7 +6,7 @@ import { AgentRuntime } from '../src/agent-runtime.js';
 import { RecursiveSpawner } from '../src/recursive-spawner.js';
 import { resolve } from 'node:path';
 import { rm } from 'node:fs/promises';
-import Anthropic from '@anthropic-ai/sdk';
+import type { LLMProvider } from '../src/types.js';
 
 const TEST_DIR = resolve('.rlm-test-data-integration');
 
@@ -44,28 +44,26 @@ describe('RLM Integration', () => {
 
       expect(dataRef.type).toBe('json');
 
-      const client = {
-        messages: {
-          create: vi.fn()
-            .mockResolvedValueOnce({
-              content: [{ type: 'tool_use', id: 'c1', name: 'store_get', input: { key: 'input-data' } }],
-              stop_reason: 'tool_use',
-              usage: { input_tokens: 100, output_tokens: 50 },
-            })
-            .mockResolvedValueOnce({
-              content: [{ type: 'tool_use', id: 'c2', name: 'store_set', input: { key: 'analysis', value: '{"count": 3, "first": "apple"}' } }],
-              stop_reason: 'tool_use',
-              usage: { input_tokens: 150, output_tokens: 60 },
-            })
-            .mockResolvedValueOnce({
-              content: [{ type: 'text', text: 'Analysis complete. Found 3 items.' }],
-              stop_reason: 'end_turn',
-              usage: { input_tokens: 200, output_tokens: 30 },
-            }),
-        },
-      } as unknown as Anthropic;
+      const provider: LLMProvider = {
+        chat: vi.fn()
+          .mockResolvedValueOnce({
+            content: [{ type: 'tool_use', id: 'c1', name: 'store_get', input: { key: 'input-data' } }],
+            stopReason: 'tool_use',
+            usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          })
+          .mockResolvedValueOnce({
+            content: [{ type: 'tool_use', id: 'c2', name: 'store_set', input: { key: 'analysis', value: '{"count": 3, "first": "apple"}' } }],
+            stopReason: 'tool_use',
+            usage: { inputTokens: 150, outputTokens: 60, totalTokens: 210 },
+          })
+          .mockResolvedValueOnce({
+            content: [{ type: 'text', text: 'Analysis complete. Found 3 items.' }],
+            stopReason: 'end_turn',
+            usage: { inputTokens: 200, outputTokens: 30, totalTokens: 230 },
+          }),
+      };
 
-      runtime = new AgentRuntime({ store, registry, anthropicClient: client });
+      runtime = new AgentRuntime({ store, registry, provider });
 
       const agent = runtime.create({
         id: 'int-agent', prompt: 'Analyze input-data',
@@ -134,17 +132,15 @@ describe('RLM Integration', () => {
       const r2 = await store.set('a-2', { findings: ['C'] }, { type: 'result' });
       const r3 = await store.set('a-3', { findings: ['D', 'E'] }, { type: 'result' });
 
-      const client = {
-        messages: {
-          create: vi.fn(async () => ({
-            content: [{ type: 'text', text: 'Done' }],
-            stop_reason: 'end_turn',
-            usage: { input_tokens: 10, output_tokens: 5 },
-          })),
-        },
-      } as unknown as Anthropic;
+      const provider: LLMProvider = {
+        chat: vi.fn(async () => ({
+          content: [{ type: 'text' as const, text: 'Done' }],
+          stopReason: 'end_turn' as const,
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        })),
+      };
 
-      runtime = new AgentRuntime({ store, registry, anthropicClient: client });
+      runtime = new AgentRuntime({ store, registry, provider });
       spawner = new RecursiveSpawner({
         runtime, store, registry,
         defaultModel: 'claude-sonnet-4-5-20250929',

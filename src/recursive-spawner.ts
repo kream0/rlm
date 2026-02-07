@@ -10,9 +10,11 @@ import type {
   AgentConfig,
   AgentResult,
   FunctionSpec,
+  ProviderType,
 } from './types.js';
 import type { AgentRuntime } from './agent-runtime.js';
 import type { FunctionRegistry } from './function-registry.js';
+import type { ContextStore } from './context-store.js';
 
 export interface RecursiveSpawnerOptions {
   runtime: AgentRuntime;
@@ -22,6 +24,7 @@ export interface RecursiveSpawnerOptions {
   maxDepth: number;
   maxConcurrent: number;
   onLog?: (message: string) => void;
+  providerType?: ProviderType;
 }
 
 interface SpawnedAgent {
@@ -46,6 +49,7 @@ export class RecursiveSpawner implements IRecursiveSpawner {
   private rootId: string | undefined;
   private activeConcurrent = 0;
   private currentDepth = 0;
+  private providerType: ProviderType;
 
   constructor(opts: RecursiveSpawnerOptions) {
     this.runtime = opts.runtime;
@@ -55,6 +59,7 @@ export class RecursiveSpawner implements IRecursiveSpawner {
     this.maxDepth = opts.maxDepth;
     this.maxConcurrent = opts.maxConcurrent;
     this.onLog = opts.onLog ?? (() => {});
+    this.providerType = opts.providerType ?? 'api';
   }
 
   async spawn(config: SpawnConfig, parentId?: string, depth = 0): Promise<VariableRef> {
@@ -100,12 +105,27 @@ export class RecursiveSpawner implements IRecursiveSpawner {
 
     // Build context summary for the agent
     let contextPrompt = config.prompt;
-    for (const [name, ref] of Object.entries(config.context)) {
-      try {
-        const summary = await this.store.summarize(ref.key, 200);
-        contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}, ${ref.sizeBytes} bytes, type: ${ref.type}): ${summary}`;
-      } catch {
-        contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}): [not resolvable]`;
+    if (this.providerType === 'claude-code' && this.isContextStore(this.store)) {
+      // Claude-code mode: persist variables to disk and provide file paths
+      for (const [name, ref] of Object.entries(config.context)) {
+        try {
+          const filePath = await (this.store as ContextStore).persistForSubAgent(ref.key);
+          contextPrompt += `\n\nContext variable "${name}" (${ref.sizeBytes} bytes, type: ${ref.type}):`;
+          contextPrompt += `\nRead ${filePath}`;
+          contextPrompt += `\nThe JSON file has a "value" field with the data.`;
+        } catch {
+          contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}): [not resolvable]`;
+        }
+      }
+    } else {
+      // API mode: inline summaries as before
+      for (const [name, ref] of Object.entries(config.context)) {
+        try {
+          const summary = await this.store.summarize(ref.key, 200);
+          contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}, ${ref.sizeBytes} bytes, type: ${ref.type}): ${summary}`;
+        } catch {
+          contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}): [not resolvable]`;
+        }
       }
     }
 
@@ -368,5 +388,9 @@ export class RecursiveSpawner implements IRecursiveSpawner {
     while (this.activeConcurrent >= this.maxConcurrent) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+  }
+
+  private isContextStore(store: IContextStore): store is ContextStore {
+    return 'persistForSubAgent' in store;
   }
 }

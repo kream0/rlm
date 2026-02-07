@@ -126,6 +126,9 @@ export interface AgentResult {
   tokenUsage: TokenUsage;
   iterations: number;
   children: AgentResult[];
+  costUsd?: number;
+  sessionId?: string;
+  numTurns?: number;
 }
 
 export interface IAgentRuntime {
@@ -216,6 +219,8 @@ export interface IMemoryManager {
 
 // --- CLI / Config ---
 
+export type ProviderType = 'api' | 'claude-code';
+
 export interface RLMConfig {
   model: string;
   apiKey: string;
@@ -225,6 +230,10 @@ export interface RLMConfig {
   tokenBudget: number;
   storageDir: string;
   verbose: boolean;
+  provider?: ProviderType;
+  claudeBinary?: string;
+  claudeMaxBudgetUsd?: number;
+  claudeModel?: string;
 }
 
 export interface RunOptions {

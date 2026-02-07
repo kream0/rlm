@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { randomUUID } from 'node:crypto';
 import type {
   IAgentRuntime,
@@ -9,31 +8,35 @@ import type {
   TokenUsage,
   IContextStore,
   IFunctionRegistry,
-  ToolDefinition,
+  LLMProvider,
+  LLMResponse,
   LLMContentBlock,
+  ProviderType,
 } from './types.js';
 
 export interface AgentRuntimeOptions {
-  apiKey?: string;
+  provider: LLMProvider;
   store: IContextStore;
   registry: IFunctionRegistry;
   onLog?: (agentId: string, message: string) => void;
-  anthropicClient?: Anthropic;
+  providerType?: ProviderType;
 }
 
 export class AgentRuntime implements IAgentRuntime {
   private agents = new Map<string, Agent>();
-  private client: Anthropic;
+  private provider: LLMProvider;
   private store: IContextStore;
   private registry: IFunctionRegistry;
   private onLog: (agentId: string, message: string) => void;
   private terminationSignals = new Map<string, unknown>();
+  private providerType: ProviderType;
 
   constructor(opts: AgentRuntimeOptions) {
-    this.client = opts.anthropicClient ?? new Anthropic({ apiKey: opts.apiKey ?? process.env.ANTHROPIC_API_KEY });
+    this.provider = opts.provider;
     this.store = opts.store;
     this.registry = opts.registry;
     this.onLog = opts.onLog ?? (() => {});
+    this.providerType = opts.providerType ?? 'api';
   }
 
   create(config: AgentConfig): Agent {
@@ -88,8 +91,14 @@ export class AgentRuntime implements IAgentRuntime {
         agent.iterations = i + 1;
         this.onLog(agent.id, `Iteration ${i + 1}/${maxIterations}`);
 
-        // Call the LLM
-        const response = await this.callLLM(agent, systemPrompt, messages, tools);
+        // Call the LLM via provider
+        const response = await this.provider.chat({
+          model: agent.config.model,
+          system: systemPrompt,
+          messages,
+          tools,
+          maxTokens: 4096,
+        });
 
         // Track token usage
         agent.tokenUsage.inputTokens += response.usage.inputTokens;
@@ -263,6 +272,13 @@ export class AgentRuntime implements IAgentRuntime {
       '- User: ask_user, notify_user, final_answer',
     ];
 
+    if (this.providerType === 'claude-code') {
+      parts.push('');
+      parts.push('Context variables are persisted as JSON files on disk.');
+      parts.push('When given a file path to context data, use the Read tool to access it.');
+      parts.push('The JSON files contain a "value" field with the actual data.');
+    }
+
     if (agent.config.parentId) {
       parts.push('', `You are a sub-agent of agent ${agent.config.parentId}.`);
       parts.push('When you have completed your task, call return_result with your findings.');
@@ -272,81 +288,6 @@ export class AgentRuntime implements IAgentRuntime {
 
     return parts.join('\n');
   }
-
-  private async callLLM(
-    agent: Agent,
-    systemPrompt: string,
-    messages: Array<{ role: 'user' | 'assistant'; content: string | ContentBlock[] }>,
-    tools: ToolDefinition[],
-  ): Promise<{ content: ResponseBlock[]; stopReason: string; usage: TokenUsage }> {
-    // Convert tools to Anthropic format
-    const anthropicTools = tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      input_schema: t.input_schema as Anthropic.Tool['input_schema'],
-    }));
-
-    // Convert messages to Anthropic format
-    const anthropicMessages = messages.map((m) => {
-      if (typeof m.content === 'string') {
-        return { role: m.role as 'user' | 'assistant', content: m.content };
-      }
-      return {
-        role: m.role as 'user' | 'assistant',
-        content: m.content.map((block) => {
-          if (block.type === 'text') {
-            return { type: 'text' as const, text: block.text };
-          } else if (block.type === 'tool_use') {
-            return {
-              type: 'tool_use' as const,
-              id: block.id,
-              name: block.name,
-              input: block.input,
-            };
-          } else if (block.type === 'tool_result') {
-            return {
-              type: 'tool_result' as const,
-              tool_use_id: block.tool_use_id,
-              content: block.content,
-            };
-          }
-          return block;
-        }),
-      };
-    });
-
-    const response = await this.client.messages.create({
-      model: agent.config.model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: anthropicMessages as Anthropic.MessageParam[],
-      tools: anthropicTools.length > 0 ? anthropicTools : undefined,
-    });
-
-    const content: ResponseBlock[] = response.content.map((block) => {
-      if (block.type === 'text') {
-        return { type: 'text' as const, text: block.text };
-      } else if (block.type === 'tool_use') {
-        return {
-          type: 'tool_use' as const,
-          id: block.id,
-          name: block.name,
-          input: block.input as Record<string, unknown>,
-        };
-      }
-      return block as unknown as ResponseBlock;
-    });
-
-    return {
-      content,
-      stopReason: response.stop_reason ?? 'end_turn',
-      usage: {
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
-        totalTokens: response.usage.input_tokens + response.usage.output_tokens,
-      },
-    };
-  }
 }
 
 // Content block types for internal use
@@ -354,7 +295,6 @@ type TextBlock = { type: 'text'; text: string };
 type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
 type ToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string };
 type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
-type ResponseBlock = TextBlock | ToolUseBlock;
 
 function tryParseJSON(str: string): unknown {
   try {

@@ -4,32 +4,30 @@ import { ContextStore } from '../src/context-store.js';
 import { FunctionRegistry } from '../src/function-registry.js';
 import { resolve } from 'node:path';
 import { rm } from 'node:fs/promises';
-import Anthropic from '@anthropic-ai/sdk';
+import type { LLMProvider, LLMResponse } from '../src/types.js';
 
 const TEST_DIR = resolve('.rlm-test-data-runtime');
 
 interface MockResponse {
   content: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
-  stop_reason: string;
-  usage: { input_tokens: number; output_tokens: number };
+  stopReason: string;
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number };
 }
 
-function createMockClient(responses: MockResponse[]) {
+function createMockProvider(responses: MockResponse[]): LLMProvider {
   let callIndex = 0;
   return {
-    messages: {
-      create: vi.fn(async () => {
-        if (callIndex >= responses.length) {
-          return {
-            content: [{ type: 'text', text: 'Done' }],
-            stop_reason: 'end_turn',
-            usage: { input_tokens: 10, output_tokens: 5 },
-          };
-        }
-        return responses[callIndex++];
-      }),
-    },
-  } as unknown as Anthropic;
+    chat: vi.fn(async () => {
+      if (callIndex >= responses.length) {
+        return {
+          content: [{ type: 'text' as const, text: 'Done' }],
+          stopReason: 'end_turn' as const,
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        };
+      }
+      return responses[callIndex++] as LLMResponse;
+    }),
+  };
 }
 
 describe('AgentRuntime', () => {
@@ -50,9 +48,9 @@ describe('AgentRuntime', () => {
   });
 
   it('should create an agent', () => {
-    const client = createMockClient([]);
+    const provider = createMockProvider([]);
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -67,14 +65,14 @@ describe('AgentRuntime', () => {
   });
 
   it('should run an agent that returns text', async () => {
-    const client = createMockClient([{
+    const provider = createMockProvider([{
       content: [{ type: 'text', text: 'Hello, task complete!' }],
-      stop_reason: 'end_turn',
-      usage: { input_tokens: 100, output_tokens: 50 },
+      stopReason: 'end_turn',
+      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
     }]);
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -99,21 +97,21 @@ describe('AgentRuntime', () => {
       scope: 'core',
     });
 
-    const client = createMockClient([
+    const provider = createMockProvider([
       {
         content: [{ type: 'tool_use', id: 'call-1', name: 'greet', input: { name: 'World' } }],
-        stop_reason: 'tool_use',
-        usage: { input_tokens: 50, output_tokens: 30 },
+        stopReason: 'tool_use',
+        usage: { inputTokens: 50, outputTokens: 30, totalTokens: 80 },
       },
       {
         content: [{ type: 'text', text: 'Greeted successfully.' }],
-        stop_reason: 'end_turn',
-        usage: { input_tokens: 80, output_tokens: 20 },
+        stopReason: 'end_turn',
+        usage: { inputTokens: 80, outputTokens: 20, totalTokens: 100 },
       },
     ]);
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -129,14 +127,14 @@ describe('AgentRuntime', () => {
   });
 
   it('should terminate on return_result', async () => {
-    const client = createMockClient([{
+    const provider = createMockProvider([{
       content: [{ type: 'tool_use', id: 'call-1', name: 'return_result', input: { value: '{"answer": 42}' } }],
-      stop_reason: 'tool_use',
-      usage: { input_tokens: 50, output_tokens: 30 },
+      stopReason: 'tool_use',
+      usage: { inputTokens: 50, outputTokens: 30, totalTokens: 80 },
     }]);
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -151,14 +149,14 @@ describe('AgentRuntime', () => {
   });
 
   it('should terminate on final_answer', async () => {
-    const client = createMockClient([{
+    const provider = createMockProvider([{
       content: [{ type: 'tool_use', id: 'call-1', name: 'final_answer', input: { result: 'The answer is 42' } }],
-      stop_reason: 'tool_use',
-      usage: { input_tokens: 50, output_tokens: 30 },
+      stopReason: 'tool_use',
+      usage: { inputTokens: 50, outputTokens: 30, totalTokens: 80 },
     }]);
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -173,15 +171,13 @@ describe('AgentRuntime', () => {
   });
 
   it('should respect maxIterations', async () => {
-    const loopClient = {
-      messages: {
-        create: vi.fn(async () => ({
-          content: [{ type: 'tool_use', id: `call-${Date.now()}`, name: 'store_list', input: {} }],
-          stop_reason: 'tool_use',
-          usage: { input_tokens: 10, output_tokens: 5 },
-        })),
-      },
-    } as unknown as Anthropic;
+    const loopProvider: LLMProvider = {
+      chat: vi.fn(async () => ({
+        content: [{ type: 'tool_use' as const, id: `call-${Date.now()}`, name: 'store_list', input: {} }],
+        stopReason: 'tool_use' as const,
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      })),
+    };
 
     registry.register({
       name: 'store_list', description: 'List', parameters: {},
@@ -189,7 +185,7 @@ describe('AgentRuntime', () => {
     });
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: loopClient,
+      store, registry, provider: loopProvider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -209,21 +205,21 @@ describe('AgentRuntime', () => {
       handler: async () => { throw new Error('Tool crashed'); }, scope: 'core',
     });
 
-    const client = createMockClient([
+    const provider = createMockProvider([
       {
         content: [{ type: 'tool_use', id: 'call-1', name: 'failing_tool', input: {} }],
-        stop_reason: 'tool_use',
-        usage: { input_tokens: 50, output_tokens: 30 },
+        stopReason: 'tool_use',
+        usage: { inputTokens: 50, outputTokens: 30, totalTokens: 80 },
       },
       {
         content: [{ type: 'text', text: 'Tool failed, wrapping up.' }],
-        stop_reason: 'end_turn',
-        usage: { input_tokens: 80, output_tokens: 20 },
+        stopReason: 'end_turn',
+        usage: { inputTokens: 80, outputTokens: 20, totalTokens: 100 },
       },
     ]);
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -238,9 +234,9 @@ describe('AgentRuntime', () => {
   });
 
   it('should cancel an agent', async () => {
-    const client = createMockClient([]);
+    const provider = createMockProvider([]);
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -255,9 +251,9 @@ describe('AgentRuntime', () => {
   });
 
   it('should get agent status', () => {
-    const client = createMockClient([]);
+    const provider = createMockProvider([]);
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
     });
 
     runtime.create({
@@ -272,14 +268,14 @@ describe('AgentRuntime', () => {
   it('should include context ref summary', async () => {
     await store.set('my-context', 'Important context data');
 
-    const client = createMockClient([{
+    const provider = createMockProvider([{
       content: [{ type: 'text', text: 'Done with context' }],
-      stop_reason: 'end_turn',
-      usage: { input_tokens: 100, output_tokens: 50 },
+      stopReason: 'end_turn',
+      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
     }]);
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -290,20 +286,18 @@ describe('AgentRuntime', () => {
     });
 
     await runtime.run(agent);
-    const createCall = (client.messages.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    const firstMessage = createCall.messages[0];
+    const chatCall = (provider.chat as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const firstMessage = chatCall.messages[0];
     expect(firstMessage.content).toContain('my-context');
   });
 
   it('should handle LLM API errors', async () => {
-    const errorClient = {
-      messages: {
-        create: vi.fn(async () => { throw new Error('API rate limit exceeded'); }),
-      },
-    } as unknown as Anthropic;
+    const errorProvider: LLMProvider = {
+      chat: vi.fn(async () => { throw new Error('API rate limit exceeded'); }),
+    };
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: errorClient,
+      store, registry, provider: errorProvider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -318,14 +312,14 @@ describe('AgentRuntime', () => {
   });
 
   it('should store result in context store', async () => {
-    const client = createMockClient([{
+    const provider = createMockProvider([{
       content: [{ type: 'text', text: 'Task result' }],
-      stop_reason: 'end_turn',
-      usage: { input_tokens: 50, output_tokens: 20 },
+      stopReason: 'end_turn',
+      usage: { inputTokens: 50, outputTokens: 20, totalTokens: 70 },
     }]);
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
     });
 
     const agent = runtime.create({
@@ -339,14 +333,14 @@ describe('AgentRuntime', () => {
   });
 
   it('should use custom termination fn', async () => {
-    const client = createMockClient([{
+    const provider = createMockProvider([{
       content: [{ type: 'text', text: 'Still working on it...' }],
-      stop_reason: 'end_turn',
-      usage: { input_tokens: 50, output_tokens: 20 },
+      stopReason: 'end_turn',
+      usage: { inputTokens: 50, outputTokens: 20, totalTokens: 70 },
     }]);
 
     const runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
     });
 
     const agent = runtime.create({

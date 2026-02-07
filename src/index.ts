@@ -10,6 +10,11 @@ export { RecursiveSpawner } from './recursive-spawner.js';
 export type { RecursiveSpawnerOptions } from './recursive-spawner.js';
 export { run, main, getDefaultConfig } from './cli.js';
 
+// Provider exports
+export { AnthropicProvider, ClaudeCodeProvider } from './providers/index.js';
+export type { AnthropicProviderOptions } from './providers/anthropic-provider.js';
+export type { ClaudeCodeProviderOptions, ClaudeCodeMetadata } from './providers/claude-code-provider.js';
+
 // Re-export all types
 export type {
   VariableType,
@@ -43,6 +48,7 @@ export type {
   IMemoryManager,
   RLMConfig,
   RunOptions,
+  ProviderType,
   LLMProvider,
   LLMMessage,
   LLMContentBlock,

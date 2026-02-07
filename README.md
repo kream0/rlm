@@ -40,8 +40,13 @@ The result: a 200K-token context window can coordinate **2,700+ tasks** instead 
                        |                  |
               +--------v------+   +-------v-------+
               | LLM Provider  |   | User Function |
-              | (Anthropic)   |   | (I/O Bridge)  |
-              +--------------+   +---------------+
+              | (see below)   |   | (I/O Bridge)  |
+              +--+--------+--+   +---------------+
+                 |        |
+     +-----------v--+ +---v--------------+
+     | Anthropic    | | Claude Code CLI  |
+     | API (SDK)    | | (claude -p)      |
+     +--------------+ +------------------+
 ```
 
 ## Modules
@@ -60,7 +65,7 @@ The result: a 200K-token context window can coordinate **2,700+ tasks** instead 
 ### Prerequisites
 
 - Node.js 18+
-- An [Anthropic API key](https://console.anthropic.com/)
+- **Either** a [Claude Code subscription](https://claude.ai/) (no API key needed) **or** an [Anthropic API key](https://console.anthropic.com/)
 
 ### Install
 
@@ -68,7 +73,14 @@ The result: a 200K-token context window can coordinate **2,700+ tasks** instead 
 npm install
 ```
 
-### Run the interactive REPL
+### Run with Claude Code (no API key)
+
+```bash
+npm run dev
+# Provider auto-detected as 'claude-code' when no ANTHROPIC_API_KEY is set
+```
+
+### Run with Anthropic API
 
 ```bash
 export ANTHROPIC_API_KEY=your-key-here
@@ -79,6 +91,7 @@ npm run dev
 
 ```bash
 npm run dev -- run "Analyze this codebase and summarize its architecture"
+npm run dev -- run "Analyze data" --provider claude-code --claude-model opus
 ```
 
 ### REPL Commands
@@ -96,12 +109,17 @@ npm run dev -- run "Analyze this codebase and summarize its architecture"
 ```typescript
 import {
   ContextStore,
-  MemoryManager,
-  FunctionRegistry,
   AgentRuntime,
   RecursiveSpawner,
+  AnthropicProvider,
+  ClaudeCodeProvider,
   createCoreFunctions,
 } from 'rlm';
+
+// Choose a provider
+const provider = process.env.ANTHROPIC_API_KEY
+  ? new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : new ClaudeCodeProvider({ model: 'sonnet', maxBudgetUsd: 1.0 });
 
 // Initialize components
 const store = new ContextStore('./data/variables');
@@ -112,11 +130,7 @@ for (const fn of createCoreFunctions({ store })) {
   registry.register(fn);
 }
 
-const runtime = new AgentRuntime({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  store,
-  registry,
-});
+const runtime = new AgentRuntime({ provider, store, registry });
 
 const spawner = new RecursiveSpawner({
   runtime, store, registry,
@@ -136,6 +150,45 @@ const resultRef = await spawner.spawn({
 
 // Read the result
 const result = await store.resolve(resultRef);
+```
+
+## Providers
+
+RLM abstracts LLM access behind the `LLMProvider` interface, with two built-in implementations:
+
+### Claude Code (`--provider claude-code`)
+
+Sub-agents run as headless Claude Code CLI processes (`claude -p`). No API key needed -- just a Claude Code subscription. Claude Code handles its own tool use, file access, and iteration natively. RLM spawns processes, waits for JSON output, and collects results.
+
+Context variables are persisted as JSON files on disk. Sub-agent prompts include absolute file paths so Claude Code can read them with its native `Read` tool.
+
+```bash
+npm run dev -- --provider claude-code
+npm run dev -- --provider claude-code --claude-binary /path/to/claude --claude-budget 1.0 --claude-model opus
+```
+
+### Anthropic API (`--provider api`)
+
+Direct API calls via `@anthropic-ai/sdk`. Requires `ANTHROPIC_API_KEY`. This is the traditional mode where RLM drives the full REPL loop (tool calls, iteration, context management).
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+npm run dev -- --provider api
+```
+
+### Auto-detection
+
+If `--provider` is not specified, RLM auto-detects:
+- `api` if `ANTHROPIC_API_KEY` is set
+- `claude-code` otherwise
+
+### Provider CLI Options
+
+```
+--provider <type>        'api' or 'claude-code' (default: auto-detect)
+--claude-binary <path>   Path to claude binary (default: 'claude')
+--claude-budget <usd>    Max budget per claude-code invocation
+--claude-model <model>   Model for claude-code provider (default: 'sonnet')
 ```
 
 ## Key Concepts
@@ -199,7 +252,7 @@ const answer = await ask_user("What format should the report be in?");
 npm run dev          # Start interactive REPL
 npm run demo         # Run feature demonstration
 npm run benchmark    # Run performance benchmarks
-npm test             # Run all tests (110 tests)
+npm test             # Run all tests (121 tests)
 npm run build        # Build for distribution
 npm run lint         # Type check
 ```
@@ -224,16 +277,20 @@ Run `npm run benchmark` to see full results. Key numbers:
 ```
 rlm/
   src/
-    types.ts              Type definitions
+    types.ts              Type definitions and LLMProvider interface
     index.ts              Public API exports
     context-store.ts      Variable storage with references
     memory-manager.ts     Multi-layer memory system
     function-registry.ts  Tool management
-    agent-runtime.ts      Agent execution loop
+    agent-runtime.ts      Agent execution loop (uses LLMProvider)
     recursive-spawner.ts  Sub-agent spawning and merging
     cli.ts                REPL and CLI interface
     demo.ts               Feature demonstration
     benchmark.ts          Performance benchmark suite
+    providers/
+      index.ts            Provider barrel exports
+      anthropic-provider.ts   Anthropic SDK provider
+      claude-code-provider.ts Claude Code CLI provider
   tests/
     context-store.test.ts
     memory-manager.test.ts
@@ -241,6 +298,7 @@ rlm/
     agent-runtime.test.ts
     recursive-spawner.test.ts
     integration.test.ts
+    claude-code-provider.test.ts
   specs/                  Detailed specifications per module
   SPECS.md                Architecture overview
   CLAUDE.md               Development instructions
@@ -250,7 +308,7 @@ rlm/
 
 - **Language**: TypeScript (strict mode)
 - **Runtime**: Node.js
-- **LLM**: Anthropic Claude API (`@anthropic-ai/sdk`)
+- **LLM Providers**: Anthropic API (`@anthropic-ai/sdk`) or Claude Code CLI (`claude -p`)
 - **Testing**: Vitest
 - **Build**: tsup
 

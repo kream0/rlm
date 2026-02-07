@@ -7,7 +7,9 @@ import { FunctionRegistry, createCoreFunctions, createExecutionFunctions, create
 import { MemoryManager } from './memory-manager.js';
 import { AgentRuntime } from './agent-runtime.js';
 import { RecursiveSpawner } from './recursive-spawner.js';
-import type { RLMConfig, AgentResult, RunOptions, AgentTree } from './types.js';
+import { AnthropicProvider } from './providers/anthropic-provider.js';
+import { ClaudeCodeProvider } from './providers/claude-code-provider.js';
+import type { RLMConfig, AgentResult, RunOptions, AgentTree, LLMProvider, ProviderType } from './types.js';
 
 const VERSION = '1.0.0';
 
@@ -24,6 +26,22 @@ function getDefaultConfig(): RLMConfig {
   };
 }
 
+function resolveProviderType(config: RLMConfig): ProviderType {
+  if (config.provider) return config.provider;
+  return config.apiKey ? 'api' : 'claude-code';
+}
+
+function createProvider(config: RLMConfig, providerType: ProviderType): LLMProvider {
+  if (providerType === 'claude-code') {
+    return new ClaudeCodeProvider({
+      binary: config.claudeBinary,
+      model: config.claudeModel,
+      maxBudgetUsd: config.claudeMaxBudgetUsd,
+    });
+  }
+  return new AnthropicProvider({ apiKey: config.apiKey });
+}
+
 function log(message: string, verbose = false): void {
   if (verbose) {
     process.stderr.write(`[RLM] ${message}\n`);
@@ -31,6 +49,9 @@ function log(message: string, verbose = false): void {
 }
 
 async function createSystem(config: RLMConfig) {
+  const providerType = resolveProviderType(config);
+  const provider = createProvider(config, providerType);
+
   const store = new ContextStore(resolve(config.storageDir, 'variables'));
   await store.init();
 
@@ -50,10 +71,11 @@ async function createSystem(config: RLMConfig) {
   }
 
   const runtime = new AgentRuntime({
-    apiKey: config.apiKey,
+    provider,
     store,
     registry,
     onLog: (agentId, msg) => log(`[${agentId.slice(0, 8)}] ${msg}`, config.verbose),
+    providerType,
   });
 
   const spawner = new RecursiveSpawner({
@@ -64,6 +86,7 @@ async function createSystem(config: RLMConfig) {
     maxDepth: config.maxDepth,
     maxConcurrent: config.maxConcurrent,
     onLog: (msg) => log(msg, config.verbose),
+    providerType,
   });
 
   return { store, memory, registry, runtime, spawner };
@@ -143,7 +166,8 @@ export async function run(task: string, options?: RunOptions): Promise<AgentResu
 }
 
 async function startREPL(config: RLMConfig): Promise<void> {
-  console.log(`RLM v${VERSION} - Recursive Language Model`);
+  const providerType = resolveProviderType(config);
+  console.log(`RLM v${VERSION} - Recursive Language Model (provider: ${providerType})`);
   console.log('Type a task or command. You are a part of this system.');
   console.log('Commands: .status, .vars, .clear, .quit\n');
 
@@ -312,6 +336,10 @@ Options:
   --max-concurrent <n>     Max concurrent agents (default: ${config.maxConcurrent})
   --verbose                Enable verbose logging
   --context <file>         Load a context file (can be repeated)
+  --provider <type>        Provider: 'api' or 'claude-code' (default: auto-detect)
+  --claude-binary <path>   Path to claude binary (default: 'claude')
+  --claude-budget <usd>    Max budget for claude-code provider
+  --claude-model <model>   Model for claude-code provider (default: 'sonnet')
 `);
     return 0;
   }
@@ -334,12 +362,27 @@ Options:
       case '-v':
         config.verbose = true;
         break;
+      case '--provider':
+        config.provider = args[++i] as ProviderType;
+        break;
+      case '--claude-binary':
+        config.claudeBinary = args[++i];
+        break;
+      case '--claude-budget':
+        config.claudeMaxBudgetUsd = parseFloat(args[++i]);
+        break;
+      case '--claude-model':
+        config.claudeModel = args[++i];
+        break;
     }
   }
 
-  if (!config.apiKey) {
-    console.error('Error: ANTHROPIC_API_KEY environment variable is required.');
+  // Only require API key for 'api' provider
+  const providerType = resolveProviderType(config);
+  if (providerType === 'api' && !config.apiKey) {
+    console.error('Error: ANTHROPIC_API_KEY environment variable is required for API provider.');
     console.error('Set it with: export ANTHROPIC_API_KEY=your-key-here');
+    console.error('Or use: --provider claude-code (requires Claude Code CLI)');
     return 1;
   }
 
@@ -398,4 +441,4 @@ if (isMainModule) {
     });
 }
 
-export { main, startREPL, getDefaultConfig };
+export { main, startREPL, getDefaultConfig, createSystem, resolveProviderType, createProvider };

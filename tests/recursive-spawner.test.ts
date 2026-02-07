@@ -5,25 +5,23 @@ import { ContextStore } from '../src/context-store.js';
 import { FunctionRegistry } from '../src/function-registry.js';
 import { resolve } from 'node:path';
 import { rm } from 'node:fs/promises';
-import Anthropic from '@anthropic-ai/sdk';
+import type { LLMProvider } from '../src/types.js';
 
 const TEST_DIR = resolve('.rlm-test-data-spawner');
 
-function makeMockClient(result = 'Sub-agent result') {
+function makeMockProvider(result = 'Sub-agent result'): LLMProvider {
   return {
-    messages: {
-      create: vi.fn(async () => ({
-        content: [{
-          type: 'tool_use',
-          id: 'call-1',
-          name: 'return_result',
-          input: { value: JSON.stringify(result) },
-        }],
-        stop_reason: 'tool_use',
-        usage: { input_tokens: 50, output_tokens: 30 },
-      })),
-    },
-  } as unknown as Anthropic;
+    chat: vi.fn(async () => ({
+      content: [{
+        type: 'tool_use' as const,
+        id: 'call-1',
+        name: 'return_result',
+        input: { value: JSON.stringify(result) },
+      }],
+      stopReason: 'tool_use' as const,
+      usage: { inputTokens: 50, outputTokens: 30, totalTokens: 80 },
+    })),
+  };
 }
 
 describe('RecursiveSpawner', () => {
@@ -39,9 +37,9 @@ describe('RecursiveSpawner', () => {
     registry = new FunctionRegistry();
     logs = [];
 
-    const client = makeMockClient();
+    const provider = makeMockProvider();
     runtime = new AgentRuntime({
-      store, registry, anthropicClient: client,
+      store, registry, provider,
       onLog: (_id, msg) => logs.push(msg),
     });
 
@@ -201,14 +199,12 @@ describe('RecursiveSpawner', () => {
 
   describe('error handling', () => {
     it('should handle agent failure', async () => {
-      const errorClient = {
-        messages: {
-          create: vi.fn(async () => { throw new Error('Agent died'); }),
-        },
-      } as unknown as Anthropic;
+      const errorProvider: LLMProvider = {
+        chat: vi.fn(async () => { throw new Error('Agent died'); }),
+      };
 
       const errorRuntime = new AgentRuntime({
-        store, registry, anthropicClient: errorClient,
+        store, registry, provider: errorProvider,
       });
       const errorSpawner = new RecursiveSpawner({
         runtime: errorRuntime, store, registry,

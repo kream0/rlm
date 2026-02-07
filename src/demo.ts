@@ -139,6 +139,7 @@ async function demo() {
     store,
     registry,
     onLog: () => {},
+    provider: { chat: async () => ({ content: [{ type: 'text' as const, text: 'done' }], stopReason: 'end_turn' as const, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }) },
   });
 
   const spawner = new RecursiveSpawner({
