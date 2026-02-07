@@ -12,7 +12,7 @@ const VERSION = '1.0.0';
 
 function getDefaultConfig(): RLMConfig {
   return {
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'claude-opus-4-6',
     maxDepth: 5,
     maxConcurrent: 3,
     tokenBudget: 1_000_000,
@@ -111,7 +111,7 @@ Options:
   --context <file>         Load a context file (can be repeated)
   --claude-binary <path>   Path to claude binary (default: 'claude')
   --claude-budget <usd>    Max budget per claude-code invocation
-  --claude-model <model>   Model for claude-code provider (default: 'sonnet')
+  --claude-model <model>   Model for claude-code provider (default: 'opus')
   --claude-permission-mode Permission mode (default: 'acceptEdits')
 `);
     return 0;

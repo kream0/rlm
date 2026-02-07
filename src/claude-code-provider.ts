@@ -28,7 +28,7 @@ export class ClaudeCodeProvider implements LLMProvider {
 
   constructor(opts: ClaudeCodeProviderOptions = {}) {
     this.binary = opts.binary ?? 'claude';
-    this.defaultModel = opts.model ?? 'sonnet';
+    this.defaultModel = opts.model ?? 'opus';
     this.maxBudgetUsd = opts.maxBudgetUsd;
     this.timeout = opts.timeout ?? 300_000; // 5 minutes
     this.permissionMode = opts.permissionMode ?? 'acceptEdits';

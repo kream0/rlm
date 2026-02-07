@@ -59,7 +59,7 @@ This is NOT a chatbot. This is a programming language come alive - a system that
 
 - **Runtime**: Node.js / Bun
 - **Language**: TypeScript (strict mode)
-- **LLM**: Anthropic Claude API (claude-sonnet-4-5-20250929)
+- **LLM**: Anthropic Claude API (claude-opus-4-6)
 - **Testing**: Vitest
 - **Build**: tsup or esbuild
 - **Package Manager**: bun

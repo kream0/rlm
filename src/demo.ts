@@ -144,7 +144,7 @@ async function demo() {
   const spawner = new RecursiveSpawner({
     runtime,
     store,
-    defaultModel: 'claude-sonnet-4-5-20250929',
+    defaultModel: 'claude-opus-4-6',
     maxDepth: 5,
     maxConcurrent: 3,
     onLog: (msg) => console.log(`  [spawner] ${msg}`),

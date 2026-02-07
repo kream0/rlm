@@ -62,7 +62,7 @@ bun install
 
 ```bash
 bun run dev -- run "Analyze this codebase and summarize its architecture"
-bun run dev -- run "Analyze data" --claude-model opus
+bun run dev -- run "Analyze data"
 ```
 
 ## Usage as a Library
@@ -77,7 +77,7 @@ import {
 
 // Create provider (Claude Code CLI)
 const provider = new ClaudeCodeProvider({
-  model: 'sonnet',
+  model: 'opus',
   maxBudgetUsd: 1.0,
 });
 
@@ -89,7 +89,7 @@ const runtime = new AgentRuntime({ provider, store });
 
 const spawner = new RecursiveSpawner({
   runtime, store,
-  defaultModel: 'claude-sonnet-4-5-20250929',
+  defaultModel: 'claude-opus-4-6',
   maxDepth: 5,
   maxConcurrent: 3,
 });
@@ -133,14 +133,14 @@ interface ExecutionResult {
 ### CLI Options
 
 ```
---model <model>              LLM model (default: claude-sonnet-4-5-20250929)
+--model <model>              LLM model (default: claude-opus-4-6)
 --max-depth <n>              Max recursion depth (default: 5)
 --max-concurrent <n>         Max concurrent agents (default: 3)
 --verbose                    Enable verbose logging
 --context <file>             Load a context file (can be repeated)
 --claude-binary <path>       Path to claude binary (default: 'claude')
 --claude-budget <usd>        Max budget per invocation
---claude-model <model>       Model for provider (default: 'sonnet')
+--claude-model <model>       Model for provider (default: 'opus')
 --claude-permission-mode     Permission mode (default: 'acceptEdits')
 ```
 
