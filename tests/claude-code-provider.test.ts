@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ClaudeCodeProvider } from '../src/providers/claude-code-provider.js';
+import { ClaudeCodeProvider } from '../src/claude-code-provider.js';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 
@@ -67,7 +67,7 @@ describe('ClaudeCodeProvider', () => {
     });
   });
 
-  describe('chat', () => {
+  describe('execute', () => {
     it('should parse successful JSON output', async () => {
       const output = JSON.stringify({
         type: 'result',
@@ -87,18 +87,15 @@ describe('ClaudeCodeProvider', () => {
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
       const provider = new ClaudeCodeProvider({ model: 'sonnet' });
-      const response = await provider.chat({
-        model: 'sonnet',
-        system: 'You are a helpful assistant',
-        messages: [{ role: 'user', content: 'Analyze this data' }],
+      const response = await provider.execute({
+        prompt: 'Analyze this data',
       });
 
-      expect(response.content).toHaveLength(1);
-      expect(response.content[0].type).toBe('text');
-      expect((response.content[0] as { type: 'text'; text: string }).text).toBe('Analysis complete: found 3 items');
-      expect(response.stopReason).toBe('end_turn');
-      expect(response.usage.inputTokens).toBe(100);
-      expect(response.usage.outputTokens).toBe(50);
+      expect(response.result).toBe('Analysis complete: found 3 items');
+      expect(response.costUsd).toBe(0.05);
+      expect(response.sessionId).toBe('sess-123');
+      expect(response.numTurns).toBe(2);
+      expect(response.durationMs).toBe(1500);
 
       // Check metadata
       expect(provider.lastMetadata.costUsd).toBe(0.05);
@@ -122,10 +119,8 @@ describe('ClaudeCodeProvider', () => {
         permissionMode: 'plan',
       });
 
-      await provider.chat({
-        model: 'opus',
-        system: 'System prompt',
-        messages: [{ role: 'user', content: 'Hello' }],
+      await provider.execute({
+        prompt: 'Hello',
       });
 
       expect(mockSpawn).toHaveBeenCalledWith(
@@ -142,7 +137,7 @@ describe('ClaudeCodeProvider', () => {
       );
     });
 
-    it('should flatten system + messages into prompt', async () => {
+    it('should pass prompt string directly', async () => {
       const output = JSON.stringify({
         type: 'result',
         result: 'ok',
@@ -152,27 +147,34 @@ describe('ClaudeCodeProvider', () => {
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
       const provider = new ClaudeCodeProvider();
-      await provider.chat({
-        model: 'sonnet',
-        system: 'Be concise',
-        messages: [
-          { role: 'user', content: 'What is 2+2?' },
-          { role: 'assistant', content: [{ type: 'text', text: 'Let me calculate.' }] },
-          { role: 'user', content: 'Please answer' },
-        ],
+      await provider.execute({
+        prompt: 'Analyze the code and report findings',
       });
 
       const args = mockSpawn.mock.calls[0][1] as string[];
       const promptIndex = args.indexOf('-p');
       const prompt = args[promptIndex + 1];
 
-      expect(prompt).toContain('[System Instructions]');
-      expect(prompt).toContain('Be concise');
-      expect(prompt).toContain('[User]');
-      expect(prompt).toContain('What is 2+2?');
-      expect(prompt).toContain('[Assistant]');
-      expect(prompt).toContain('Let me calculate.');
-      expect(prompt).toContain('Please answer');
+      expect(prompt).toBe('Analyze the code and report findings');
+    });
+
+    it('should allow per-call model override', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'ok',
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+
+      const provider = new ClaudeCodeProvider({ model: 'sonnet' });
+      await provider.execute({
+        prompt: 'test',
+        model: 'opus',
+      });
+
+      const args = mockSpawn.mock.calls[0][1] as string[];
+      const modelIndex = args.indexOf('--model');
+      expect(args[modelIndex + 1]).toBe('opus');
     });
 
     it('should handle non-zero exit code', async () => {
@@ -180,10 +182,8 @@ describe('ClaudeCodeProvider', () => {
 
       const provider = new ClaudeCodeProvider();
 
-      await expect(provider.chat({
-        model: 'sonnet',
-        system: '',
-        messages: [{ role: 'user', content: 'test' }],
+      await expect(provider.execute({
+        prompt: 'test',
       })).rejects.toThrow('Claude Code exited with code 1');
     });
 
@@ -192,10 +192,8 @@ describe('ClaudeCodeProvider', () => {
 
       const provider = new ClaudeCodeProvider();
 
-      await expect(provider.chat({
-        model: 'sonnet',
-        system: '',
-        messages: [{ role: 'user', content: 'test' }],
+      await expect(provider.execute({
+        prompt: 'test',
       })).rejects.toThrow('Failed to parse Claude Code output');
     });
 
@@ -219,10 +217,8 @@ describe('ClaudeCodeProvider', () => {
 
       const provider = new ClaudeCodeProvider();
 
-      await expect(provider.chat({
-        model: 'sonnet',
-        system: '',
-        messages: [{ role: 'user', content: 'test' }],
+      await expect(provider.execute({
+        prompt: 'test',
       })).rejects.toThrow('Failed to spawn Claude Code');
     });
 
@@ -246,14 +242,12 @@ describe('ClaudeCodeProvider', () => {
 
       const provider = new ClaudeCodeProvider({ timeout: 50 });
 
-      await expect(provider.chat({
-        model: 'sonnet',
-        system: '',
-        messages: [{ role: 'user', content: 'test' }],
+      await expect(provider.execute({
+        prompt: 'test',
       })).rejects.toThrow('timed out');
     }, 10000);
 
-    it('should handle missing usage in output', async () => {
+    it('should handle missing fields in output', async () => {
       const output = JSON.stringify({
         type: 'result',
         result: 'answer',
@@ -262,15 +256,15 @@ describe('ClaudeCodeProvider', () => {
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
       const provider = new ClaudeCodeProvider();
-      const response = await provider.chat({
-        model: 'sonnet',
-        system: '',
-        messages: [{ role: 'user', content: 'test' }],
+      const response = await provider.execute({
+        prompt: 'test',
       });
 
-      expect(response.usage.inputTokens).toBe(0);
-      expect(response.usage.outputTokens).toBe(0);
-      expect(response.usage.totalTokens).toBe(0);
+      expect(response.result).toBe('answer');
+      expect(response.costUsd).toBeUndefined();
+      expect(response.durationMs).toBeUndefined();
+      expect(response.sessionId).toBeUndefined();
+      expect(response.numTurns).toBeUndefined();
     });
 
     it('should handle object result', async () => {
@@ -283,14 +277,11 @@ describe('ClaudeCodeProvider', () => {
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
       const provider = new ClaudeCodeProvider();
-      const response = await provider.chat({
-        model: 'sonnet',
-        system: '',
-        messages: [{ role: 'user', content: 'test' }],
+      const response = await provider.execute({
+        prompt: 'test',
       });
 
-      const text = (response.content[0] as { type: 'text'; text: string }).text;
-      expect(JSON.parse(text)).toEqual({ key: 'value', nested: [1, 2, 3] });
+      expect(JSON.parse(response.result)).toEqual({ key: 'value', nested: [1, 2, 3] });
     });
   });
 });

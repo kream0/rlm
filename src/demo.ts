@@ -3,7 +3,7 @@
  *
  * This demo shows:
  * 1. Context Store: Variables passed by reference, not value
- * 2. Registry: Everything is a callable entity
+ * 2. Registry: Custom callbacks via FunctionRegistry
  * 3. Memory Manager: Episodic, semantic, procedural memory
  * 4. Merge Strategies: Fan-out/fan-in result combination
  *
@@ -11,11 +11,12 @@
  */
 
 import { ContextStore } from './context-store.js';
-import { FunctionRegistry, createCoreFunctions } from './function-registry.js';
+import { FunctionRegistry } from './function-registry.js';
 import { MemoryManager } from './memory-manager.js';
 import { AgentRuntime } from './agent-runtime.js';
 import { RecursiveSpawner } from './recursive-spawner.js';
 import { resolve } from 'node:path';
+import type { LLMProvider, ExecutionResult } from './types.js';
 
 async function demo() {
   console.log('=== RLM Demo: Recursive Language Model ===\n');
@@ -59,11 +60,6 @@ async function demo() {
 
   const registry = new FunctionRegistry();
 
-  const coreFns = createCoreFunctions({ store });
-  for (const fn of coreFns) {
-    registry.register(fn);
-  }
-
   // Register a custom tool
   registry.register({
     name: 'add_numbers',
@@ -75,10 +71,9 @@ async function demo() {
     handler: async (params) => {
       return { result: (params.a as number) + (params.b as number) };
     },
-    scope: 'custom',
   });
 
-  const tools = registry.toToolDefinitions();
+  const tools = registry.list();
   console.log(`Registered tools: ${tools.length}`);
   for (const tool of tools) {
     console.log(`  ${tool.name}: ${tool.description.slice(0, 60)}...`);
@@ -135,17 +130,20 @@ async function demo() {
   const ref2 = await store.set('result-2', 'Found pattern B in section 2', { type: 'result' });
   const ref3 = await store.set('result-3', 'Found pattern A in section 3', { type: 'result' });
 
+  // Mock provider for demo
+  const mockProvider: LLMProvider = {
+    execute: async () => ({ result: 'done' } as ExecutionResult),
+  };
+
   const runtime = new AgentRuntime({
     store,
-    registry,
     onLog: () => {},
-    provider: { chat: async () => ({ content: [{ type: 'text' as const, text: 'done' }], stopReason: 'end_turn' as const, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }) },
+    provider: mockProvider,
   });
 
   const spawner = new RecursiveSpawner({
     runtime,
     store,
-    registry,
     defaultModel: 'claude-sonnet-4-5-20250929',
     maxDepth: 5,
     maxConcurrent: 3,
@@ -168,7 +166,7 @@ async function demo() {
   console.log('\n=== Demo Complete ===');
   console.log('\nKey Paradigm Shifts Demonstrated:');
   console.log('1. Variables are references, not values - sub-agents get handles, not copies');
-  console.log('2. The user is a callable - ask_user(), notify_user(), final_answer()');
+  console.log('2. Custom callbacks via FunctionRegistry for extensibility');
   console.log('3. Memory is infinite - working memory compacts, episodic/semantic persist');
   console.log('4. Agents are recursive - they spawn more of themselves and merge results');
   console.log('5. Context windows stay clean - no matter how much work sub-agents do');

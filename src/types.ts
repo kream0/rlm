@@ -63,25 +63,13 @@ export interface FunctionSpec {
   description: string;
   parameters: Record<string, ParameterSpec>;
   handler: (params: Record<string, unknown>) => Promise<unknown>;
-  scope?: 'core' | 'agent' | 'user' | 'custom';
-}
-
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  input_schema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required: string[];
-  };
 }
 
 export interface IFunctionRegistry {
   register(spec: FunctionSpec): void;
   unregister(name: string): void;
   get(name: string): FunctionSpec;
-  list(scope?: string): FunctionSpec[];
-  toToolDefinitions(scope?: string): ToolDefinition[];
+  list(): FunctionSpec[];
   execute(name: string, params: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -93,6 +81,25 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+// --- LLM Provider ---
+
+export interface ExecutionResult {
+  result: string;
+  costUsd?: number;
+  durationMs?: number;
+  sessionId?: string;
+  numTurns?: number;
+}
+
+export interface LLMProvider {
+  execute(params: {
+    prompt: string;
+    model?: string;
+    maxBudgetUsd?: number;
+    permissionMode?: string;
+  }): Promise<ExecutionResult>;
+}
+
 // --- Agent ---
 
 export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -102,10 +109,7 @@ export interface AgentConfig {
   id: string;
   prompt: string;
   contextRef?: VariableRef;
-  functions: FunctionSpec[];
   model: string;
-  maxIterations?: number;
-  terminationFn?: (result: unknown) => boolean;
   parentId?: string;
   onComplete?: OnComplete;
 }
@@ -144,7 +148,6 @@ export interface SpawnConfig {
   prompt: string;
   context: Record<string, VariableRef>;
   model?: string;
-  maxIterations?: number;
   timeout?: number;
   onComplete?: OnComplete;
 }
@@ -219,55 +222,22 @@ export interface IMemoryManager {
 
 // --- CLI / Config ---
 
-export type ProviderType = 'api' | 'claude-code';
-
 export interface RLMConfig {
   model: string;
-  apiKey: string;
   maxDepth: number;
   maxConcurrent: number;
-  maxIterations: number;
   tokenBudget: number;
   storageDir: string;
   verbose: boolean;
-  provider?: ProviderType;
   claudeBinary?: string;
   claudeMaxBudgetUsd?: number;
   claudeModel?: string;
+  claudePermissionMode?: string;
 }
 
 export interface RunOptions {
   contextFiles?: string[];
   model?: string;
-  maxIterations?: number;
   maxDepth?: number;
   verbose?: boolean;
-}
-
-// --- LLM Provider ---
-
-export interface LLMProvider {
-  chat(params: {
-    model: string;
-    system: string;
-    messages: LLMMessage[];
-    tools?: ToolDefinition[];
-    maxTokens?: number;
-  }): Promise<LLMResponse>;
-}
-
-export interface LLMMessage {
-  role: 'user' | 'assistant';
-  content: string | LLMContentBlock[];
-}
-
-export type LLMContentBlock =
-  | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id: string; content: string };
-
-export interface LLMResponse {
-  content: LLMContentBlock[];
-  stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
-  usage: TokenUsage;
 }

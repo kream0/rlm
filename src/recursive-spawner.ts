@@ -6,25 +6,18 @@ import type {
   MergeStrategy,
   AgentTree,
   TokenUsage,
-  IContextStore,
   AgentConfig,
-  AgentResult,
-  FunctionSpec,
-  ProviderType,
 } from './types.js';
 import type { AgentRuntime } from './agent-runtime.js';
-import type { FunctionRegistry } from './function-registry.js';
 import type { ContextStore } from './context-store.js';
 
 export interface RecursiveSpawnerOptions {
   runtime: AgentRuntime;
-  store: IContextStore;
-  registry: FunctionRegistry;
+  store: ContextStore;
   defaultModel: string;
   maxDepth: number;
   maxConcurrent: number;
   onLog?: (message: string) => void;
-  providerType?: ProviderType;
 }
 
 interface SpawnedAgent {
@@ -39,8 +32,7 @@ interface SpawnedAgent {
 
 export class RecursiveSpawner implements IRecursiveSpawner {
   private runtime: AgentRuntime;
-  private store: IContextStore;
-  private registry: FunctionRegistry;
+  private store: ContextStore;
   private defaultModel: string;
   private maxDepth: number;
   private maxConcurrent: number;
@@ -49,17 +41,14 @@ export class RecursiveSpawner implements IRecursiveSpawner {
   private rootId: string | undefined;
   private activeConcurrent = 0;
   private currentDepth = 0;
-  private providerType: ProviderType;
 
   constructor(opts: RecursiveSpawnerOptions) {
     this.runtime = opts.runtime;
     this.store = opts.store;
-    this.registry = opts.registry;
     this.defaultModel = opts.defaultModel;
     this.maxDepth = opts.maxDepth;
     this.maxConcurrent = opts.maxConcurrent;
     this.onLog = opts.onLog ?? (() => {});
-    this.providerType = opts.providerType ?? 'api';
   }
 
   async spawn(config: SpawnConfig, parentId?: string, depth = 0): Promise<VariableRef> {
@@ -70,7 +59,6 @@ export class RecursiveSpawner implements IRecursiveSpawner {
 
     // Check concurrency
     if (this.activeConcurrent >= this.maxConcurrent) {
-      // Wait for a slot to open
       await this.waitForSlot();
     }
 
@@ -103,96 +91,27 @@ export class RecursiveSpawner implements IRecursiveSpawner {
 
     this.onLog(`Spawning agent ${agentId} at depth ${depth}${parentId ? ` (parent: ${parentId})` : ''}`);
 
-    // Build context summary for the agent
+    // Build context prompt: always persist variables to disk and provide file paths
     let contextPrompt = config.prompt;
-    if (this.providerType === 'claude-code' && this.isContextStore(this.store)) {
-      // Claude-code mode: persist variables to disk and provide file paths
-      for (const [name, ref] of Object.entries(config.context)) {
-        try {
-          const filePath = await (this.store as ContextStore).persistForSubAgent(ref.key);
-          contextPrompt += `\n\nContext variable "${name}" (${ref.sizeBytes} bytes, type: ${ref.type}):`;
-          contextPrompt += `\nRead ${filePath}`;
-          contextPrompt += `\nThe JSON file has a "value" field with the data.`;
-        } catch {
-          contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}): [not resolvable]`;
-        }
-      }
-    } else {
-      // API mode: inline summaries as before
-      for (const [name, ref] of Object.entries(config.context)) {
-        try {
-          const summary = await this.store.summarize(ref.key, 200);
-          contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}, ${ref.sizeBytes} bytes, type: ${ref.type}): ${summary}`;
-        } catch {
-          contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}): [not resolvable]`;
-        }
+    for (const [name, ref] of Object.entries(config.context)) {
+      try {
+        const filePath = await this.store.persistForSubAgent(ref.key);
+        contextPrompt += `\n\nContext variable "${name}" (${ref.sizeBytes} bytes, type: ${ref.type}):`;
+        contextPrompt += `\nRead ${filePath}`;
+        contextPrompt += `\nThe JSON file has a "value" field with the data.`;
+      } catch {
+        contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}): [not resolvable]`;
       }
     }
-
-    // Create agent functions that allow this sub-agent to spawn its own children
-    const childSpawner = this;
-    const agentFunctions: FunctionSpec[] = [
-      {
-        name: 'spawn_agent',
-        description: 'Spawn a sub-agent with its own prompt and context.',
-        parameters: {
-          prompt: { type: 'string', description: 'Instructions for the sub-agent', required: true },
-          context_keys: { type: 'string', description: 'Comma-separated list of variable keys to pass as context', required: false, default: '' },
-        },
-        handler: async (params) => {
-          const contextKeys = (params.context_keys as string || '').split(',').filter(Boolean);
-          const subContext: Record<string, VariableRef> = {};
-          for (const key of contextKeys) {
-            const trimmedKey = key.trim();
-            if (this.store.has(trimmedKey)) {
-              subContext[trimmedKey] = this.store.ref(trimmedKey);
-            }
-          }
-          const resultRef = await childSpawner.spawn(
-            {
-              prompt: params.prompt as string,
-              context: subContext,
-              model: config.model,
-              maxIterations: config.maxIterations,
-            },
-            agentId,
-            depth + 1,
-          );
-          return { spawned: true, resultRef };
-        },
-        scope: 'agent',
-      },
-      {
-        name: 'return_result',
-        description: 'Return a result to the parent agent and terminate.',
-        parameters: {
-          value: { type: 'string', description: 'The result to return', required: true },
-        },
-        handler: async (params) => {
-          return { returned: true, value: params.value };
-        },
-        scope: 'agent',
-      },
-    ];
 
     // Create and configure the agent
     const agentConfig: AgentConfig = {
       id: agentId,
       prompt: contextPrompt,
       model: config.model ?? this.defaultModel,
-      maxIterations: config.maxIterations ?? 20,
       parentId,
       onComplete: config.onComplete ?? 'return',
-      functions: [...this.registry.list('core'), ...agentFunctions],
     };
-
-    // Register the agent-specific functions temporarily
-    for (const fn of agentFunctions) {
-      const scopedName = `${fn.name}_${agentId.slice(0, 8)}`;
-      if (!this.registry.has(scopedName)) {
-        this.registry.register({ ...fn, name: scopedName });
-      }
-    }
 
     try {
       const agent = this.runtime.create(agentConfig);
@@ -210,7 +129,7 @@ export class RecursiveSpawner implements IRecursiveSpawner {
       spawnedAgent.tokenUsage = result.tokenUsage;
       spawnedAgent.resultRef = resultRef;
 
-      this.onLog(`Agent ${agentId} completed (tokens: ${result.tokenUsage.totalTokens}, iterations: ${result.iterations})`);
+      this.onLog(`Agent ${agentId} completed (iterations: ${result.iterations})`);
 
       return resultRef;
     } catch (err: unknown) {
@@ -226,13 +145,6 @@ export class RecursiveSpawner implements IRecursiveSpawner {
       });
     } finally {
       this.activeConcurrent--;
-      // Clean up scoped functions
-      for (const fn of agentFunctions) {
-        const scopedName = `${fn.name}_${agentId.slice(0, 8)}`;
-        if (this.registry.has(scopedName)) {
-          this.registry.unregister(scopedName);
-        }
-      }
     }
   }
 
@@ -258,14 +170,12 @@ export class RecursiveSpawner implements IRecursiveSpawner {
 
     switch (strategy.type) {
       case 'concatenate': {
-        // Join all results as strings
         const parts = results.map((r) => typeof r === 'string' ? r : JSON.stringify(r));
         merged = parts.join('\n---\n');
         break;
       }
 
       case 'structured': {
-        // Each result is a field in the merged object
         const obj: Record<string, unknown> = {};
         refs.forEach((ref, i) => {
           obj[ref.key] = results[i];
@@ -275,7 +185,6 @@ export class RecursiveSpawner implements IRecursiveSpawner {
       }
 
       case 'vote': {
-        // Count occurrences of each result (stringified for comparison)
         const votes = new Map<string, { count: number; value: unknown }>();
         for (const result of results) {
           const key = JSON.stringify(result);
@@ -286,7 +195,6 @@ export class RecursiveSpawner implements IRecursiveSpawner {
             votes.set(key, { count: 1, value: result });
           }
         }
-        // Return the most common result
         let maxCount = 0;
         let winner: unknown = results[0];
         for (const { count, value } of votes.values()) {
@@ -300,7 +208,6 @@ export class RecursiveSpawner implements IRecursiveSpawner {
       }
 
       case 'summarize': {
-        // Create a text summary of all results
         const summaryParts = results.map((r, i) => {
           const str = typeof r === 'string' ? r : JSON.stringify(r, null, 2);
           return `[Result ${i + 1} from ${refs[i].key}]:\n${str}`;
@@ -384,13 +291,8 @@ export class RecursiveSpawner implements IRecursiveSpawner {
   }
 
   private async waitForSlot(): Promise<void> {
-    // Simple polling wait - in production would use a semaphore
     while (this.activeConcurrent >= this.maxConcurrent) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-  }
-
-  private isContextStore(store: IContextStore): store is ContextStore {
-    return 'persistForSubAgent' in store;
   }
 }

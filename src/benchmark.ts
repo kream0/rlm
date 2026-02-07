@@ -14,7 +14,12 @@ import { MemoryManager } from './memory-manager.js';
 import { FunctionRegistry } from './function-registry.js';
 import { RecursiveSpawner } from './recursive-spawner.js';
 import { AgentRuntime } from './agent-runtime.js';
-import type { VariableRef, MergeStrategyType, MemoryType } from './types.js';
+import type { VariableRef, MergeStrategyType, MemoryType, LLMProvider, ExecutionResult } from './types.js';
+
+// Mock provider for benchmarks
+const mockProvider: LLMProvider = {
+  execute: async () => ({ result: 'done' } as ExecutionResult),
+};
 
 // ── Utilities ──────────────────────────────────────────────────
 
@@ -500,16 +505,13 @@ async function benchMergeStrategies(store: ContextStore): Promise<void> {
   const resultCounts = [3, 10, 50];
 
   // Build a mock spawner just for merge testing
-  const registry = new FunctionRegistry();
   const runtime = new AgentRuntime({
     store,
-    registry,
-    provider: { chat: async () => ({ content: [{ type: 'text' as const, text: 'done' }], stopReason: 'end_turn' as const, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }) },
+    provider: mockProvider,
   });
   const spawner = new RecursiveSpawner({
     runtime,
     store,
-    registry,
     defaultModel: 'mock',
     maxDepth: 5,
     maxConcurrent: 3,
@@ -581,11 +583,9 @@ async function benchSpawningOverhead(store: ContextStore): Promise<void> {
   console.log(DOUBLE_DIVIDER);
   console.log();
 
-  const registry = new FunctionRegistry();
   const runtime = new AgentRuntime({
     store,
-    registry,
-    provider: { chat: async () => ({ content: [{ type: 'text' as const, text: 'done' }], stopReason: 'end_turn' as const, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }) },
+    provider: mockProvider,
   });
 
   // 5a: Agent creation overhead
@@ -598,7 +598,6 @@ async function benchSpawningOverhead(store: ContextStore): Promise<void> {
         id: randomUUID(),
         prompt: 'Benchmark agent prompt',
         model: 'mock-model',
-        functions: [],
       }),
     );
     creationTotalMs += ms;
@@ -622,7 +621,6 @@ async function benchSpawningOverhead(store: ContextStore): Promise<void> {
     const spawner = new RecursiveSpawner({
       runtime,
       store,
-      registry,
       defaultModel: 'mock',
       maxDepth: 5,
       maxConcurrent: 10,
@@ -646,7 +644,6 @@ async function benchSpawningOverhead(store: ContextStore): Promise<void> {
   const spawner = new RecursiveSpawner({
     runtime,
     store,
-    registry,
     defaultModel: 'mock',
     maxDepth: 5,
     maxConcurrent: 10,
@@ -669,7 +666,6 @@ async function benchSpawningOverhead(store: ContextStore): Promise<void> {
           input: { type: 'string', description: 'Input', required: true },
         },
         handler: async () => ({}),
-        scope: 'custom',
       }),
     );
     regTotalMs += ms;
@@ -679,10 +675,10 @@ async function benchSpawningOverhead(store: ContextStore): Promise<void> {
   const listIterations = 500;
   let listMs = 0;
   for (let i = 0; i < listIterations; i++) {
-    const { ms } = timeSync(() => fnRegistry.toToolDefinitions());
+    const { ms } = timeSync(() => fnRegistry.list());
     listMs += ms;
   }
-  console.log(`  toToolDefinitions() (${fnCount} fns): ${((listMs / listIterations) * 1000).toFixed(1)} us avg`);
+  console.log(`  list() (${fnCount} fns): ${((listMs / listIterations) * 1000).toFixed(1)} us avg`);
 }
 
 // ── 6. Context Window Savings Simulation ────────────────────────

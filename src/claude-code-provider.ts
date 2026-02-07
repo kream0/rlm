@@ -1,11 +1,5 @@
 import { spawn } from 'node:child_process';
-import type {
-  LLMProvider,
-  LLMMessage,
-  LLMResponse,
-  LLMContentBlock,
-  ToolDefinition,
-} from '../types.js';
+import type { LLMProvider, ExecutionResult } from './types.js';
 
 export interface ClaudeCodeProviderOptions {
   binary?: string;
@@ -29,7 +23,7 @@ export class ClaudeCodeProvider implements LLMProvider {
   private timeout: number;
   private permissionMode: string;
 
-  /** Metadata from the last chat() call */
+  /** Metadata from the last execute() call */
   public lastMetadata: ClaudeCodeMetadata = {};
 
   constructor(opts: ClaudeCodeProviderOptions = {}) {
@@ -40,62 +34,43 @@ export class ClaudeCodeProvider implements LLMProvider {
     this.permissionMode = opts.permissionMode ?? 'acceptEdits';
   }
 
-  async chat(params: {
-    model: string;
-    system: string;
-    messages: LLMMessage[];
-    tools?: ToolDefinition[];
-    maxTokens?: number;
-  }): Promise<LLMResponse> {
-    const prompt = this.flattenToPrompt(params.system, params.messages);
-    const args = this.buildArgs(params.model, prompt);
-    const result = await this.execClaude(args);
-
-    return result;
+  async execute(params: {
+    prompt: string;
+    model?: string;
+    maxBudgetUsd?: number;
+    permissionMode?: string;
+  }): Promise<ExecutionResult> {
+    const args = this.buildArgs(
+      params.model ?? this.defaultModel,
+      params.prompt,
+      params.maxBudgetUsd ?? this.maxBudgetUsd,
+      params.permissionMode ?? this.permissionMode,
+    );
+    return this.execClaude(args);
   }
 
-  private flattenToPrompt(system: string, messages: LLMMessage[]): string {
-    const parts: string[] = [];
-
-    if (system) {
-      parts.push(`[System Instructions]\n${system}`);
-    }
-
-    for (const msg of messages) {
-      const role = msg.role === 'user' ? 'User' : 'Assistant';
-      if (typeof msg.content === 'string') {
-        parts.push(`[${role}]\n${msg.content}`);
-      } else {
-        // Flatten content blocks to text
-        const textParts = (msg.content as LLMContentBlock[])
-          .filter((b) => b.type === 'text')
-          .map((b) => (b as { type: 'text'; text: string }).text);
-        if (textParts.length > 0) {
-          parts.push(`[${role}]\n${textParts.join('\n')}`);
-        }
-      }
-    }
-
-    return parts.join('\n\n');
-  }
-
-  private buildArgs(model: string, prompt: string): string[] {
+  private buildArgs(
+    model: string,
+    prompt: string,
+    maxBudgetUsd?: number,
+    permissionMode?: string,
+  ): string[] {
     const args: string[] = [
       '-p', prompt,
       '--output-format', 'json',
-      '--model', model || this.defaultModel,
-      '--permission-mode', this.permissionMode,
+      '--model', model,
+      '--permission-mode', permissionMode ?? this.permissionMode,
       '--no-session-persistence',
     ];
 
-    if (this.maxBudgetUsd !== undefined) {
-      args.push('--max-budget-usd', String(this.maxBudgetUsd));
+    if (maxBudgetUsd !== undefined) {
+      args.push('--max-budget-usd', String(maxBudgetUsd));
     }
 
     return args;
   }
 
-  private execClaude(args: string[]): Promise<LLMResponse> {
+  private execClaude(args: string[]): Promise<ExecutionResult> {
     return new Promise((resolve, reject) => {
       let stdout = '';
       let stderr = '';
@@ -155,7 +130,7 @@ export class ClaudeCodeProvider implements LLMProvider {
     });
   }
 
-  private parseResponse(parsed: Record<string, unknown>): LLMResponse {
+  private parseResponse(parsed: Record<string, unknown>): ExecutionResult {
     // Store metadata for the caller
     this.lastMetadata = {
       costUsd: parsed.total_cost_usd as number | undefined,
@@ -168,23 +143,12 @@ export class ClaudeCodeProvider implements LLMProvider {
       ? parsed.result
       : JSON.stringify(parsed.result);
 
-    const content: LLMContentBlock[] = [
-      { type: 'text', text: resultText },
-    ];
-
-    // Extract usage if available
-    const usage = parsed.usage as Record<string, number> | undefined;
-    const inputTokens = usage?.input_tokens ?? 0;
-    const outputTokens = usage?.output_tokens ?? 0;
-
     return {
-      content,
-      stopReason: 'end_turn',
-      usage: {
-        inputTokens,
-        outputTokens,
-        totalTokens: inputTokens + outputTokens,
-      },
+      result: resultText,
+      costUsd: this.lastMetadata.costUsd,
+      durationMs: this.lastMetadata.durationMs,
+      sessionId: this.lastMetadata.sessionId,
+      numTurns: this.lastMetadata.numTurns,
     };
   }
 }

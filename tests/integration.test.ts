@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ContextStore } from '../src/context-store.js';
-import { FunctionRegistry, createCoreFunctions } from '../src/function-registry.js';
+import { FunctionRegistry } from '../src/function-registry.js';
 import { MemoryManager } from '../src/memory-manager.js';
 import { AgentRuntime } from '../src/agent-runtime.js';
 import { RecursiveSpawner } from '../src/recursive-spawner.js';
 import { resolve } from 'node:path';
 import { rm } from 'node:fs/promises';
-import type { LLMProvider } from '../src/types.js';
+import type { LLMProvider, ExecutionResult } from '../src/types.js';
 
 const TEST_DIR = resolve('.rlm-test-data-integration');
 
@@ -23,10 +23,6 @@ describe('RLM Integration', () => {
     memory = new MemoryManager(resolve(TEST_DIR, 'mem'));
     await memory.init();
     registry = new FunctionRegistry();
-    const coreFns = createCoreFunctions({ store });
-    for (const fn of coreFns) {
-      registry.register(fn);
-    }
   });
 
   afterEach(async () => {
@@ -45,38 +41,22 @@ describe('RLM Integration', () => {
       expect(dataRef.type).toBe('json');
 
       const provider: LLMProvider = {
-        chat: vi.fn()
-          .mockResolvedValueOnce({
-            content: [{ type: 'tool_use', id: 'c1', name: 'store_get', input: { key: 'input-data' } }],
-            stopReason: 'tool_use',
-            usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-          })
-          .mockResolvedValueOnce({
-            content: [{ type: 'tool_use', id: 'c2', name: 'store_set', input: { key: 'analysis', value: '{"count": 3, "first": "apple"}' } }],
-            stopReason: 'tool_use',
-            usage: { inputTokens: 150, outputTokens: 60, totalTokens: 210 },
-          })
-          .mockResolvedValueOnce({
-            content: [{ type: 'text', text: 'Analysis complete. Found 3 items.' }],
-            stopReason: 'end_turn',
-            usage: { inputTokens: 200, outputTokens: 30, totalTokens: 230 },
-          }),
+        execute: vi.fn(async () => ({
+          result: 'Analysis complete. Found 3 items.',
+          costUsd: 0.01,
+        } as ExecutionResult)),
       };
 
-      runtime = new AgentRuntime({ store, registry, provider });
+      runtime = new AgentRuntime({ store, provider });
 
       const agent = runtime.create({
         id: 'int-agent', prompt: 'Analyze input-data',
         model: 'claude-sonnet-4-5-20250929', contextRef: dataRef,
-        functions: registry.list(),
       });
 
       const result = await runtime.run(agent);
-      expect(result.iterations).toBe(3);
+      expect(result.iterations).toBe(1);
       expect(result.result).toContain('Analysis complete');
-
-      const analysis = await store.get('analysis');
-      expect(analysis).toEqual({ count: 3, first: 'apple' });
     });
   });
 
@@ -133,16 +113,14 @@ describe('RLM Integration', () => {
       const r3 = await store.set('a-3', { findings: ['D', 'E'] }, { type: 'result' });
 
       const provider: LLMProvider = {
-        chat: vi.fn(async () => ({
-          content: [{ type: 'text' as const, text: 'Done' }],
-          stopReason: 'end_turn' as const,
-          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-        })),
+        execute: vi.fn(async () => ({
+          result: 'Done',
+        } as ExecutionResult)),
       };
 
-      runtime = new AgentRuntime({ store, registry, provider });
+      runtime = new AgentRuntime({ store, provider });
       spawner = new RecursiveSpawner({
-        runtime, store, registry,
+        runtime, store,
         defaultModel: 'claude-sonnet-4-5-20250929',
         maxDepth: 5, maxConcurrent: 3,
       });
@@ -180,7 +158,7 @@ describe('RLM Integration', () => {
       expect(vars[0].key).toBe('document');
 
       expect(memory.getStats().episodicEntryCount).toBe(1);
-      expect(registry.toToolDefinitions().length).toBe(5);
+      expect(registry.list().length).toBe(0);
 
       const docRef = store.ref('document');
       expect(JSON.stringify(docRef).length).toBeLessThan(300);
