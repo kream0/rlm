@@ -7,6 +7,8 @@ export interface ClaudeCodeProviderOptions {
   maxBudgetUsd?: number;
   timeout?: number;
   permissionMode?: string;
+  cwd?: string;
+  addDirs?: string[];
   /** @internal For testing only -- override the child process spawn */
   spawnFn?: typeof import('node:child_process').spawn;
 }
@@ -24,6 +26,8 @@ export class ClaudeCodeProvider implements LLMProvider {
   private maxBudgetUsd?: number;
   private timeout: number;
   private permissionMode: string;
+  private defaultCwd?: string;
+  private defaultAddDirs?: string[];
   private spawnFn: typeof import('node:child_process').spawn;
 
   /** Metadata from the last execute() call */
@@ -35,6 +39,8 @@ export class ClaudeCodeProvider implements LLMProvider {
     this.maxBudgetUsd = opts.maxBudgetUsd;
     this.timeout = opts.timeout ?? 300_000; // 5 minutes
     this.permissionMode = opts.permissionMode ?? 'acceptEdits';
+    this.defaultCwd = opts.cwd;
+    this.defaultAddDirs = opts.addDirs;
     this.spawnFn = opts.spawnFn ?? spawn;
   }
 
@@ -43,14 +49,19 @@ export class ClaudeCodeProvider implements LLMProvider {
     model?: string;
     maxBudgetUsd?: number;
     permissionMode?: string;
+    cwd?: string;
+    addDirs?: string[];
   }): Promise<ExecutionResult> {
+    const addDirs = params.addDirs ?? this.defaultAddDirs;
     const args = this.buildArgs(
       params.model ?? this.defaultModel,
       params.prompt,
       params.maxBudgetUsd ?? this.maxBudgetUsd,
       params.permissionMode ?? this.permissionMode,
+      addDirs,
     );
-    return this.execClaude(args);
+    const cwd = params.cwd ?? this.defaultCwd;
+    return this.execClaude(args, cwd);
   }
 
   private buildArgs(
@@ -58,6 +69,7 @@ export class ClaudeCodeProvider implements LLMProvider {
     prompt: string,
     maxBudgetUsd?: number,
     permissionMode?: string,
+    addDirs?: string[],
   ): string[] {
     const args: string[] = [
       '-p', prompt,
@@ -71,10 +83,16 @@ export class ClaudeCodeProvider implements LLMProvider {
       args.push('--max-budget-usd', String(maxBudgetUsd));
     }
 
+    if (addDirs) {
+      for (const dir of addDirs) {
+        args.push('--add-dir', dir);
+      }
+    }
+
     return args;
   }
 
-  private execClaude(args: string[]): Promise<ExecutionResult> {
+  private execClaude(args: string[], cwd?: string): Promise<ExecutionResult> {
     return new Promise((resolve, reject) => {
       let stdout = '';
       let stderr = '';
@@ -83,6 +101,7 @@ export class ClaudeCodeProvider implements LLMProvider {
       const proc = this.spawnFn(this.binary, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env },
+        ...(cwd ? { cwd } : {}),
       });
 
       const timer = setTimeout(() => {

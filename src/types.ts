@@ -98,6 +98,8 @@ export interface LLMProvider {
     model?: string;
     maxBudgetUsd?: number;
     permissionMode?: string;
+    cwd?: string;
+    addDirs?: string[];
   }): Promise<ExecutionResult>;
 }
 
@@ -229,6 +231,56 @@ export interface IMemoryManager {
   compact(type: MemoryType, opts?: CompactOptions): Promise<void>;
   getStats(): MemoryStats;
   clear(type?: MemoryType): Promise<void>;
+}
+
+// --- DevSession ---
+
+export interface ParsedTask {
+  title: string;
+  description: string;
+  section: string;
+  lineNumber: number;
+  rawLine: string;
+}
+
+export type OnFailureMode = 'continue' | 'stop' | 'retry';
+
+export interface TaskReport {
+  task: ParsedTask;
+  status: 'completed' | 'failed' | 'skipped';
+  agentResult?: ExecutionResult;
+  costUsd?: number;
+  durationMs?: number;
+  error?: string;
+}
+
+export interface DevSessionReport {
+  projectDir: string;
+  startedAt: string;
+  completedAt: string;
+  tasksAttempted: number;
+  taskReports: TaskReport[];
+  totalCostUsd: number;
+  summary: string;
+}
+
+export interface DevSessionOptions {
+  projectDir: string;
+  tasks?: string[];
+  model?: string;
+  maxBudgetUsd?: number;
+  verbose?: boolean;
+  onFailure?: OnFailureMode;
+  providerFactory?: (opts: ClaudeCodeProviderFactoryOpts) => LLMProvider;
+}
+
+export interface ClaudeCodeProviderFactoryOpts {
+  model?: string;
+  maxBudgetUsd?: number;
+  permissionMode: string;
+  cwd: string;
+  addDirs: string[];
+  timeout: number;
 }
 
 // --- CLI / Config ---

@@ -7,7 +7,8 @@ import { FunctionRegistry } from './function-registry.js';
 import { AgentRuntime } from './agent-runtime.js';
 import { RecursiveSpawner } from './recursive-spawner.js';
 import { ClaudeCodeProvider } from './claude-code-provider.js';
-import type { RLMConfig, AgentResult, RunOptions } from './types.js';
+import { DevSession } from './dev-session.js';
+import type { RLMConfig, AgentResult, RunOptions, OnFailureMode } from './types.js';
 
 const VERSION = '1.0.0';
 
@@ -106,10 +107,16 @@ async function main(args: string[]): Promise<number> {
 RLM v${VERSION} - Recursive Language Model (Claude Code Only)
 
 Usage:
-  rlm run "<task>"                   Run a task directly
-  rlm run "<task>" --context <file>  Run with context file(s)
+  rlm run "<task>"                       Run a task directly
+  rlm run "<task>" --context <file>      Run with context file(s)
+  rlm dev --project-dir /path/to/project Autonomous dev session
 
-Options:
+Dev Options:
+  --project-dir <dir>      Project directory (required for dev)
+  --task "<task>"           Explicit task (can be repeated; default: parse TODO.md)
+  --on-failure <mode>       continue | stop | retry (default: continue)
+
+Common Options:
   --model <model>          LLM model (default: ${config.model})
   --max-depth <n>          Max recursion depth (default: ${config.maxDepth})
   --max-concurrent <n>     Max concurrent agents (default: ${config.maxConcurrent})
@@ -153,6 +160,71 @@ Options:
     }
   }
 
+  if (command === 'dev') {
+    let projectDir = '';
+    const tasks: string[] = [];
+    let onFailure: OnFailureMode = 'continue';
+
+    for (let i = 1; i < args.length; i++) {
+      switch (args[i]) {
+        case '--project-dir':
+          projectDir = args[++i];
+          break;
+        case '--task':
+          tasks.push(args[++i]);
+          break;
+        case '--on-failure':
+          onFailure = args[++i] as OnFailureMode;
+          break;
+      }
+    }
+
+    if (!projectDir) {
+      console.error('Error: --project-dir is required for dev command.');
+      return 1;
+    }
+
+    try {
+      const session = new DevSession({
+        projectDir,
+        tasks: tasks.length > 0 ? tasks : undefined,
+        model: config.claudeModel ?? 'opus',
+        maxBudgetUsd: config.claudeMaxBudgetUsd,
+        verbose: config.verbose,
+        onFailure,
+      });
+
+      const report = await session.run();
+
+      console.log('\n' + '='.repeat(60));
+      console.log('RLM Dev Session Report');
+      console.log('='.repeat(60));
+      console.log(`Project:  ${report.projectDir}`);
+      console.log(`Started:  ${report.startedAt}`);
+      console.log(`Finished: ${report.completedAt}`);
+      console.log(`Tasks:    ${report.tasksAttempted}`);
+      console.log(`Cost:     $${report.totalCostUsd.toFixed(4)}`);
+      console.log(`Summary:  ${report.summary}`);
+      console.log('='.repeat(60));
+
+      for (const tr of report.taskReports) {
+        const icon = tr.status === 'completed' ? '\u2713' : '\u2717';
+        const cost = tr.costUsd != null ? ` ($${tr.costUsd.toFixed(4)})` : '';
+        console.log(`  ${icon} ${tr.task.title}${cost}`);
+        if (tr.error) {
+          console.log(`    Error: ${tr.error.slice(0, 200)}`);
+        }
+      }
+
+      const hasFailed = report.taskReports.some(r => r.status === 'failed');
+      return hasFailed ? 1 : 0;
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error(`Error: ${error.message}`);
+      return 1;
+    }
+  }
+
   if (command === 'run') {
     const task = args[1];
     if (!task) {
@@ -183,9 +255,11 @@ Options:
     }
   }
 
-  // No REPL mode — primary usage is as library import or `rlm run`
+  // No REPL mode — primary usage is as library import or `rlm run` / `rlm dev`
   console.log(`RLM v${VERSION} - Recursive Language Model (Claude Code Only)`);
-  console.log('Usage: rlm run "<task>" [options]');
+  console.log('Usage:');
+  console.log('  rlm run "<task>" [options]');
+  console.log('  rlm dev --project-dir <dir> [options]');
   console.log('Run rlm --help for full options.');
   return 0;
 }

@@ -11,6 +11,7 @@ Long-term roadmap items. These are not urgent but would make RLM more capable an
 - [ ] **Streaming results** - `VariableType` includes `'stream'` but nothing implements streaming. Consider supporting streamed output from `claude -p` (if Claude CLI supports it) for long-running sub-agents.
 - [ ] **Agent lifecycle hooks** - Add `onBeforeSpawn`, `onAfterComplete`, `onError` hooks to RecursiveSpawner so callers can inject logging, metrics, or side effects without modifying core code.
 - [ ] **DAG execution** - Currently fan-out is flat (spawnMany runs N agents in parallel). Support directed acyclic graph execution where agent B depends on agent A's output, while agent C runs in parallel.
+- [ ] **DevSession parallel task execution** - DevSession currently runs tasks sequentially. Add an option for parallel execution of independent tasks (with dependency tracking).
 
 ## Features
 
@@ -22,15 +23,16 @@ Long-term roadmap items. These are not urgent but would make RLM more capable an
 - [ ] **Agent templates** - Pre-defined SpawnConfig templates for common patterns: "analyze and summarize", "extract entities", "compare documents", "code review". Reduce boilerplate for common orchestration tasks.
 - [ ] **Progress reporting** - Emit progress events during long-running fan-out operations so callers can show status bars or percentage completion.
 - [ ] **Smarter chunking for decompose()** - Current `decompose()` uses naive character-based splitting. Implement sentence-boundary, paragraph-break, or semantic-unit splitting strategies for better sub-agent results.
+- [ ] **DevSession dry-run mode** - Add `--dry-run` flag that parses TODO.md and previews tasks without spawning agents. Useful for verifying task parsing before committing to execution.
 
 ## Quality
 
 - [x] **Add CLI tests** - Created `tests/cli.test.ts` covering `getDefaultConfig()`, `--help`, `-h`, run without task, no args, and `createSystem()`. (Done: Session 2, Phase 3.3)
 - [x] **Fix all silent catch blocks** - Added logging to critical catch blocks (`buildPrompt()`, `loadPersistedVariables()`, RecursiveSpawner context persistence). Acceptable silences documented with comments. (Done: Session 2, Phase 2.4)
 - [ ] **Increase test coverage for error paths** - Most tests cover happy paths. Add tests for: provider timeout, provider crash, corrupt disk files, concurrent access to ContextStore, memory manager disk I/O failures.
-- [ ] **Add integration test with mock Claude CLI** - Create a shell script or binary stub that mimics `claude -p` JSON output. Use it to test the full pipeline (CLI -> AgentRuntime -> ClaudeCodeProvider -> mock) without incurring API costs. Would also enable testing manifest-based context passing end-to-end.
-- [ ] **Test decompose() method** - The `decompose()` method needs dedicated test coverage in `tests/recursive-spawner.test.ts`.
-- [ ] **Test token budget enforcement** - Budget enforcement needs tests verifying the spawn-rejection behavior when budget is exhausted.
+- [x] **Add integration test with mock Claude CLI** - Created `tests/mock-claude.sh` stub and `tests/e2e.test.ts` with 30 tests covering full pipeline. (Done: Session 3)
+- [x] **Test decompose() method** - 20 tests in `tests/recursive-spawner.test.ts`. (Done: Session 3)
+- [x] **Test token budget enforcement** - 7 tests in `tests/recursive-spawner.test.ts`. (Done: Session 3)
 - [ ] **Benchmark regression tests** - Capture baseline benchmark numbers and fail CI if performance regresses beyond a threshold (e.g., ref creation > 10us, merge > 5ms).
 - [ ] **Lint and format enforcement** - Add ESLint with strict TypeScript rules and Prettier. Enforce in CI. Currently only `bun run lint` does `tsc --noEmit`.
 

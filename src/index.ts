@@ -14,6 +14,9 @@ export { run, main, getDefaultConfig } from './cli.js';
 export { ClaudeCodeProvider } from './claude-code-provider.js';
 export type { ClaudeCodeProviderOptions, ClaudeCodeMetadata } from './claude-code-provider.js';
 
+// DevSession export
+export { DevSession, parseTodoMd, buildDevPrompt } from './dev-session.js';
+
 // Re-export all types
 export type {
   VariableType,
@@ -48,4 +51,10 @@ export type {
   IMemoryManager,
   RLMConfig,
   RunOptions,
+  ParsedTask,
+  TaskReport,
+  DevSessionReport,
+  DevSessionOptions,
+  OnFailureMode,
+  ClaudeCodeProviderFactoryOpts,
 } from './types.js';

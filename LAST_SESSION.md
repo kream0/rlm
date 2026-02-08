@@ -2,6 +2,69 @@
 
 ---
 
+## Session 4 - DevSession: Autonomous Dev Tool
+
+**Date**: 2026-02-08
+**Duration**: Single session
+**Goal**: Make RLM a usable autonomous dev tool. Implement DevSession module, CLI dev subcommand, Claude Code skill, and full test coverage.
+
+### What Was Done
+
+Implemented all 7 phases of the "Make RLM a Usable Autonomous Dev Tool" plan. RLM can now autonomously read TODO.md, spawn sub-agents to implement tasks sequentially, and report results.
+
+### Phase 1: ClaudeCodeProvider — cwd and addDirs
+- Added `cwd` and `addDirs` to `ClaudeCodeProviderOptions` and `LLMProvider.execute()` params
+- `cwd` passed to `spawn()` options, `--add-dir` flags added in `buildArgs()`
+- Per-call overrides supported (execute params override constructor defaults)
+
+### Phase 2: New DevSession Types
+- Added to `src/types.ts`: `ParsedTask`, `TaskReport`, `DevSessionReport`, `DevSessionOptions`, `OnFailureMode`, `ClaudeCodeProviderFactoryOpts`
+
+### Phase 3: DevSession Module (core new module)
+- Created `src/dev-session.ts` with:
+  - `parseTodoMd()` — regex parser for `- [ ]` tasks with bold/plain formats, section tracking
+  - `buildDevPrompt()` — structured prompt with Project Rules, Your Task, Instructions, Previous Agents, Retry Context sections
+  - `DevSession.executeTask()` — spawns `claude -p` with bypassPermissions, 10min timeout, cwd/addDirs
+  - `DevSession.run()` — reads CLAUDE.md + TODO.md, sequential execution, failure modes, LAST_SESSION.md update
+  - `providerFactory` DI for testing
+
+### Phase 4: CLI dev Subcommand
+- Added `dev` command to `src/cli.ts` with `--project-dir`, `--task` (repeatable), `--on-failure`
+- Prints formatted summary report on completion
+
+### Phase 5: Claude Code Skill
+- Created `~/.claude/skills/rlm/SKILL.md` with frontmatter, quick start, options table, prerequisites
+
+### Phase 6: Exports
+- Exported `DevSession`, `parseTodoMd`, `buildDevPrompt` and all new types from `src/index.ts`
+
+### Phase 7: Tests
+- 30 new tests in `tests/dev-session.test.ts`: parseTodoMd (10), buildDevPrompt (7), sequential execution (2), failure modes (4), provider config (2), report (3), LAST_SESSION update (1), explicit tasks (1)
+- 6 new tests in `tests/claude-code-provider.test.ts`: cwd/addDirs support
+
+### Files Modified
+- `src/types.ts` — New DevSession types, extended LLMProvider.execute() params
+- `src/claude-code-provider.ts` — cwd, addDirs support
+- `src/cli.ts` — dev subcommand
+- `src/index.ts` — New exports
+- `src/dev-session.ts` — **NEW** core DevSession module
+- `tests/dev-session.test.ts` — **NEW** 30 tests
+- `tests/claude-code-provider.test.ts` — 6 new tests
+- `~/.claude/skills/rlm/SKILL.md` — **NEW** Claude Code skill
+
+### Test Results
+- 10 test files, 254 tests, all passing
+- TypeScript type checking clean
+- Build clean, `bun link` successful
+
+### Next Session Should
+1. Manual test: `rlm dev --project-dir /path/to/project --task "small task" --verbose` against a real project
+2. Consider adding `--dry-run` flag to preview tasks without executing
+3. Look at Backlog items: circuit breaker, streaming, DAG execution
+4. Consider CI pipeline setup
+
+---
+
 ## Session 1 - Initial Codebase Analysis
 
 **Date**: 2026-02-08
@@ -183,3 +246,86 @@ All four phases from PLAN.md were executed to completion. 19 files changed with 
 2. Look at Backlog items: circuit breaker, streaming results, agent lifecycle hooks
 3. Consider adding integration tests with a mock Claude CLI binary for end-to-end testing without API costs
 4. Explore smarter chunking strategies for `decompose()` (sentence boundaries, semantic splitting)
+
+---
+
+## Session 3 - Test Coverage Expansion
+
+**Date**: 2026-02-08
+**Duration**: Single session
+**Goal**: Complete all 6 testing tasks from TODO.md using parallel Opus agents.
+
+### What Was Done
+
+All 6 testing tasks executed in parallel via Opus sub-agents. +81 new tests added, bringing total from 137 to 218. One new test file (`tests/e2e.test.ts`) and one mock script (`tests/mock-claude.sh`) created.
+
+### Tests Added
+
+**5.1 decompose() tests** (20 tests in `tests/recursive-spawner.test.ts`)
+- Basic chunking: even/uneven splits, correct sub-agent count, chunk content, JSON stringification
+- Merge strategies: concatenate, structured, vote, summarize, custom
+- Edge cases: empty string, single chunk, chunks > input length, null source
+- Optional params: model override, timeout, parentId, depth enforcement
+- Error handling: all fail, partial failures, budget exhaustion
+- Result integrity: valid VariableRef, data preservation
+
+**5.2 Token budget tests** (7 tests in `tests/recursive-spawner.test.ts`)
+- Budget of 0 rejects immediately
+- Error message includes usage details
+- Cumulative tracking with varying token counts
+- Detailed breakdown via `getTotalTokenUsage()`
+- Reset clears budget
+- Boundary condition (exact budget match)
+- Budget enforcement across `spawnMany()`
+
+**5.3 Manifest context tests** (7 tests in `tests/recursive-spawner.test.ts`)
+- Creates valid JSON file on disk
+- Correct variable paths, sizes, and types
+- Manifest reference in prompt
+- Empty context returns null manifest
+- Multiple variables of different types
+- Graceful fallback on persist error
+- Correct key format (`manifest-{uuid}`)
+
+**5.4 Memory integration tests** (10 tests in `tests/agent-runtime.test.ts`)
+- Completion recorded in episodic memory
+- Failure recorded in episodic memory
+- Relevant memories injected into prompts
+- Empty search results add nothing
+- Search failures non-fatal
+- Append failures non-fatal (success + failure paths)
+- Runs normally without memory manager
+- Long results truncated
+- costUsd included in metadata
+
+**5.5 Function registry integration tests** (4 tests in `tests/agent-runtime.test.ts`)
+- Function descriptions in prompts
+- Multiple functions all appear
+- Empty registry adds nothing
+- Runs normally without registry
+
+**5.6 Mock CLI + E2E tests** (30 tests in `tests/e2e.test.ts`)
+- Created `tests/mock-claude.sh` bash stub mimicking `claude -p` JSON output
+- Single agent run (5 tests): basic execution, token usage, cost/session, echo mode, errors
+- Context variables (2 tests): pass-by-reference, large context
+- Memory integration (2 tests): episodic logging for success/failure
+- Function registry (1 test): prompt injection
+- Fan-out/fan-in (10 tests): single spawn, parallel, all merge strategies, token tracking, agent tree, context passing, error resilience
+- Decompose, budget, depth, concurrency, provider config, full pipeline, reset
+
+### Test Results
+
+- 9 test files, 218 tests, all passing
+- TypeScript type checking clean (`bun run lint`)
+
+### Stats
+
+- 3 files created (e2e.test.ts, mock-claude.sh, plus edits to 2 existing test files)
+- +81 new tests
+- All TODO testing items completed
+
+### Next Session Should
+
+1. Consider Future improvements: structured prompt template, smarter chunking, error messages, scope enforcement, graceful shutdown
+2. Look at Backlog items: circuit breaker, streaming results, agent lifecycle hooks, DAG execution
+3. Consider CI pipeline setup (GitHub Actions) and npm/JSR publishing

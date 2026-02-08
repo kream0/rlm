@@ -2,9 +2,9 @@
 
 ## Quick Resume
 
-**Last session**: Session 2 - Full Implementation of Phases 1-4 (see LAST_SESSION.md)
-**Current state**: All P0, P1, P2, and paper-inspired items from PLAN.md are complete. 8 test files, 137 tests passing, TypeScript clean.
-**Next step**: Testing tasks below (decompose, token budget, mock CLI), then P3 improvements and Backlog items.
+**Last session**: Session 4 - DevSession: Autonomous Dev Tool (see LAST_SESSION.md)
+**Current state**: DevSession implemented. 10 test files, 254 tests passing, TypeScript clean. `rlm dev` command available globally.
+**Next step**: Manual test against a real project, then Backlog items.
 
 ---
 
@@ -36,14 +36,24 @@
 - [x] CLI tests (Phase 3.3)
 - [x] All P0 and P1 items (Phases 1-2)
 
-## Next Session - Testing (Priority)
+## Completed (Session 3) - Testing
 
-- [ ] **Test decompose() method** - Add dedicated tests in `tests/recursive-spawner.test.ts`: basic chunking, merge strategy application, edge cases (empty input, single chunk, chunk count > input length).
-- [ ] **Test token budget enforcement** - Add tests verifying: spawn rejection when budget exhausted, cumulative tracking across multiple spawns, budget reset behavior, interaction with `getTotalTokensUsed()`.
-- [ ] **Test manifest-based context passing** - Verify `createContextManifest()` creates valid JSON, manifest file contains correct paths/sizes/types, prompt contains manifest reference.
-- [ ] **Test memory integration** - Verify episodic memory records agent completions/failures, relevant memories appear in prompts, memory search failures are non-fatal.
-- [ ] **Test function registry integration** - Verify function descriptions appear in agent prompts, empty registry adds nothing to prompt.
-- [ ] **Integration test with mock Claude CLI** - Create a shell script stub that mimics `claude -p` JSON output for end-to-end pipeline testing without API costs.
+- [x] **Test decompose() method** - 20 tests: chunking, merge strategies, edge cases, error handling, result integrity. (Session 3)
+- [x] **Test token budget enforcement** - 7 tests: rejection, cumulative tracking, reset, boundary, spawnMany. (Session 3)
+- [x] **Test manifest-based context passing** - 7 tests: valid JSON, paths/sizes/types, prompt ref, empty store, multi-var. (Session 3)
+- [x] **Test memory integration** - 10 tests: episodic logging, prompt injection, failure resilience, truncation. (Session 3)
+- [x] **Test function registry integration** - 4 tests: prompt injection, multiple fns, empty registry, no registry. (Session 3)
+- [x] **Integration test with mock Claude CLI** - 30 tests + `mock-claude.sh` stub: full pipeline, fan-out, decompose, budget, concurrency. (Session 3)
+
+## Completed (Session 4) - DevSession
+
+- [x] **ClaudeCodeProvider cwd/addDirs** - Added `cwd` and `addDirs` to provider options and execute params. (Session 4, Phase 1)
+- [x] **DevSession types** - `ParsedTask`, `TaskReport`, `DevSessionReport`, `DevSessionOptions`, `OnFailureMode`. (Session 4, Phase 2)
+- [x] **DevSession module** - `parseTodoMd()`, `buildDevPrompt()`, `DevSession` class with sequential execution, failure modes, LAST_SESSION.md update. (Session 4, Phase 3)
+- [x] **CLI dev subcommand** - `rlm dev --project-dir <dir>` with `--task`, `--on-failure` flags. (Session 4, Phase 4)
+- [x] **Claude Code skill** - `~/.claude/skills/rlm/SKILL.md` for `/rlm` invocation. (Session 4, Phase 5)
+- [x] **DevSession exports** - Exported from `src/index.ts`. (Session 4, Phase 6)
+- [x] **DevSession tests** - 30 new tests + 6 provider tests. (Session 4, Phase 7)
 
 ## Future - Improvements
 

@@ -329,6 +329,120 @@ describe('ClaudeCodeProvider', () => {
       });
     });
 
+    it('should pass cwd to spawn options', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'ok',
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
+      await provider.execute({
+        prompt: 'test',
+        cwd: '/tmp/my-project',
+      });
+
+      const spawnOpts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
+      expect(spawnOpts.cwd).toBe('/tmp/my-project');
+    });
+
+    it('should pass cwd from constructor defaults', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'ok',
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+
+      const provider = new ClaudeCodeProvider({
+        cwd: '/default/project',
+        spawnFn: mockSpawn as any,
+      });
+      await provider.execute({ prompt: 'test' });
+
+      const spawnOpts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
+      expect(spawnOpts.cwd).toBe('/default/project');
+    });
+
+    it('should add --add-dir flags', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'ok',
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
+      await provider.execute({
+        prompt: 'test',
+        addDirs: ['/dir/one', '/dir/two'],
+      });
+
+      const args = mockSpawn.mock.calls[0][1] as string[];
+      expect(args).toContain('--add-dir');
+      const addDirIndices = args.reduce<number[]>((acc, arg, i) => {
+        if (arg === '--add-dir') acc.push(i);
+        return acc;
+      }, []);
+      expect(addDirIndices).toHaveLength(2);
+      expect(args[addDirIndices[0] + 1]).toBe('/dir/one');
+      expect(args[addDirIndices[1] + 1]).toBe('/dir/two');
+    });
+
+    it('should add --add-dir flags from constructor defaults', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'ok',
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+
+      const provider = new ClaudeCodeProvider({
+        addDirs: ['/default/dir'],
+        spawnFn: mockSpawn as any,
+      });
+      await provider.execute({ prompt: 'test' });
+
+      const args = mockSpawn.mock.calls[0][1] as string[];
+      expect(args).toContain('--add-dir');
+      const idx = args.indexOf('--add-dir');
+      expect(args[idx + 1]).toBe('/default/dir');
+    });
+
+    it('should allow per-call cwd to override constructor default', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'ok',
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+
+      const provider = new ClaudeCodeProvider({
+        cwd: '/default/dir',
+        spawnFn: mockSpawn as any,
+      });
+      await provider.execute({ prompt: 'test', cwd: '/override/dir' });
+
+      const spawnOpts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
+      expect(spawnOpts.cwd).toBe('/override/dir');
+    });
+
+    it('should not include cwd in spawn options when not specified', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'ok',
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
+      await provider.execute({ prompt: 'test' });
+
+      const spawnOpts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
+      expect(spawnOpts).not.toHaveProperty('cwd');
+    });
+
     it('should not include tokenUsage when neither modelUsage nor usage is present', async () => {
       const output = JSON.stringify({
         type: 'result',
