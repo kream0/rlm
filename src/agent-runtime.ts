@@ -8,11 +8,15 @@ import type {
   IContextStore,
   LLMProvider,
   ExecutionResult,
+  IMemoryManager,
+  IFunctionRegistry,
 } from './types.js';
 
 export interface AgentRuntimeOptions {
   provider: LLMProvider;
   store: IContextStore;
+  memory?: IMemoryManager;
+  functions?: IFunctionRegistry;
   onLog?: (agentId: string, message: string) => void;
 }
 
@@ -20,11 +24,15 @@ export class AgentRuntime implements IAgentRuntime {
   private agents = new Map<string, Agent>();
   private provider: LLMProvider;
   private store: IContextStore;
+  private memory?: IMemoryManager;
+  private functions?: IFunctionRegistry;
   private onLog: (agentId: string, message: string) => void;
 
   constructor(opts: AgentRuntimeOptions) {
     this.provider = opts.provider;
     this.store = opts.store;
+    this.memory = opts.memory;
+    this.functions = opts.functions;
     this.onLog = opts.onLog ?? (() => {});
   }
 
@@ -68,16 +76,36 @@ export class AgentRuntime implements IAgentRuntime {
       });
 
       agent.iterations = 1;
+      // Update token usage from execution result
+      if (execResult.tokenUsage) {
+        agent.tokenUsage = { ...execResult.tokenUsage };
+      }
       agent.result = execResult.result;
       agent.status = 'completed';
       this.onLog(agent.id, `Agent completed with result`);
 
-      // Store result in context store
-      const resultKey = `agent-result-${agent.id}`;
-      await this.store.set(resultKey, agent.result, {
-        type: 'result',
-        scope: agent.config.parentId ? `agent:${agent.config.parentId}` : 'global',
-      });
+      // Record execution in episodic memory
+      if (this.memory) {
+        try {
+          await this.memory.append('episodic', {
+            id: agent.id,
+            timestamp: Date.now(),
+            content: `Agent ${agent.id} completed: `
+              + (typeof agent.result === 'string'
+                ? agent.result.slice(0, 500)
+                : JSON.stringify(agent.result).slice(0, 500)),
+            metadata: {
+              agentId: agent.id,
+              model: agent.config.model,
+              iterations: agent.iterations,
+              costUsd: execResult.costUsd,
+              status: 'completed',
+            },
+          });
+        } catch (memErr: unknown) {
+          this.onLog(agent.id, `Warning: Failed to log to episodic memory: ${(memErr as Error).message}`);
+        }
+      }
 
       return {
         agentId: agent.id,
@@ -95,12 +123,24 @@ export class AgentRuntime implements IAgentRuntime {
       agent.result = { error: error.message };
       this.onLog(agent.id, `Agent failed: ${error.message}`);
 
-      // Store error result
-      const resultKey = `agent-result-${agent.id}`;
-      await this.store.set(resultKey, agent.result, {
-        type: 'result',
-        scope: agent.config.parentId ? `agent:${agent.config.parentId}` : 'global',
-      });
+      // Record failure in episodic memory
+      if (this.memory) {
+        try {
+          await this.memory.append('episodic', {
+            id: agent.id,
+            timestamp: Date.now(),
+            content: `Agent ${agent.id} failed: ${error.message}`,
+            metadata: {
+              agentId: agent.id,
+              model: agent.config.model,
+              status: 'failed',
+              error: error.message,
+            },
+          });
+        } catch (memErr: unknown) {
+          this.onLog(agent.id, `Warning: Failed to log to episodic memory: ${(memErr as Error).message}`);
+        }
+      }
 
       return {
         agentId: agent.id,
@@ -135,13 +175,53 @@ export class AgentRuntime implements IAgentRuntime {
       try {
         const contextSummary = await this.store.summarize(agent.config.contextRef.key, 500);
         prompt += `\n\nContext variable "${agent.config.contextRef.key}" (${agent.config.contextRef.sizeBytes} bytes, type: ${agent.config.contextRef.type}):\n${contextSummary}`;
-      } catch {
-        // Context ref might not be resolvable
+      } catch (err: unknown) {
+        const error = err as Error;
+        this.onLog(
+          agent.id,
+          `Warning: Could not resolve context ref `
+            + `"${agent.config.contextRef.key}": ${error.message}`
+        );
       }
     }
 
     if (agent.config.parentId) {
       prompt += '\n\nYou are a sub-agent. Complete your task and return the result.';
+    }
+
+    // Inject relevant episodic memory if available
+    if (this.memory) {
+      try {
+        const relevantMemories = await this.memory.search(
+          'episodic', agent.config.prompt, 3
+        );
+        if (relevantMemories.length > 0) {
+          prompt += '\n\nRelevant past agent executions:';
+          for (const mem of relevantMemories) {
+            prompt += `\n- ${mem.content.slice(0, 200)}`;
+          }
+        }
+      } catch {
+        // Memory search failure is non-fatal
+      }
+    }
+
+    // Include registered function descriptions in prompt
+    if (this.functions) {
+      const funcs = this.functions.list();
+      if (funcs.length > 0) {
+        prompt += '\n\nAvailable functions (for reference):';
+        for (const fn of funcs) {
+          const params = Object.entries(fn.parameters)
+            .map(([name, spec]) =>
+              `${name}: ${spec.type}`
+              + `${spec.required === false ? '?' : ''}`
+              + ` - ${spec.description}`
+            )
+            .join(', ');
+          prompt += `\n- ${fn.name}(${params}): ${fn.description}`;
+        }
+      }
     }
 
     return prompt;

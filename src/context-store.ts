@@ -286,8 +286,13 @@ export class ContextStore implements IContextStore {
             const serialized = JSON.stringify(data.value);
             this.currentMemoryBytes += Buffer.byteLength(serialized, 'utf-8');
           }
-        } catch {
-          // Skip corrupted files
+        } catch (err: unknown) {
+          // Log corrupt files but continue loading others
+          const error = err as Error;
+          process.stderr.write(
+            `[ContextStore] Warning: Skipping corrupt file `
+              + `${filePath}: ${error.message}\n`
+          );
         }
       }
     } catch {

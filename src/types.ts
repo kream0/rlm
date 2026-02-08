@@ -89,6 +89,7 @@ export interface ExecutionResult {
   durationMs?: number;
   sessionId?: string;
   numTurns?: number;
+  tokenUsage?: TokenUsage;
 }
 
 export interface LLMProvider {
@@ -171,6 +172,16 @@ export interface IRecursiveSpawner {
   spawn(config: SpawnConfig): Promise<VariableRef>;
   spawnMany(configs: SpawnConfig[]): Promise<VariableRef[]>;
   merge(refs: VariableRef[], strategy: MergeStrategy): Promise<VariableRef>;
+  decompose(opts: {
+    prompt: string;
+    sourceRef: VariableRef;
+    chunks: number;
+    mergeStrategy: MergeStrategy;
+    model?: string;
+    timeout?: number;
+    parentId?: string;
+    depth?: number;
+  }): Promise<VariableRef>;
   getTree(): AgentTree;
 }
 

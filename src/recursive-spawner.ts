@@ -17,6 +17,7 @@ export interface RecursiveSpawnerOptions {
   defaultModel: string;
   maxDepth: number;
   maxConcurrent: number;
+  tokenBudget?: number;
   onLog?: (message: string) => void;
 }
 
@@ -36,11 +37,14 @@ export class RecursiveSpawner implements IRecursiveSpawner {
   private defaultModel: string;
   private maxDepth: number;
   private maxConcurrent: number;
+  private tokenBudget: number;
+  private totalTokensUsed = 0;
   private onLog: (message: string) => void;
   private spawnedAgents = new Map<string, SpawnedAgent>();
   private rootId: string | undefined;
   private activeConcurrent = 0;
   private currentDepth = 0;
+  private waitQueue: Array<() => void> = [];
 
   constructor(opts: RecursiveSpawnerOptions) {
     this.runtime = opts.runtime;
@@ -48,6 +52,7 @@ export class RecursiveSpawner implements IRecursiveSpawner {
     this.defaultModel = opts.defaultModel;
     this.maxDepth = opts.maxDepth;
     this.maxConcurrent = opts.maxConcurrent;
+    this.tokenBudget = opts.tokenBudget ?? Infinity;
     this.onLog = opts.onLog ?? (() => {});
   }
 
@@ -55,6 +60,14 @@ export class RecursiveSpawner implements IRecursiveSpawner {
     // Check recursion depth
     if (depth >= this.maxDepth) {
       throw new Error(`Maximum recursion depth (${this.maxDepth}) exceeded`);
+    }
+
+    // Check token budget
+    if (this.totalTokensUsed >= this.tokenBudget) {
+      throw new Error(
+        `Token budget exhausted `
+        + `(${this.totalTokensUsed} / ${this.tokenBudget} tokens used)`
+      );
     }
 
     // Check concurrency
@@ -91,17 +104,14 @@ export class RecursiveSpawner implements IRecursiveSpawner {
 
     this.onLog(`Spawning agent ${agentId} at depth ${depth}${parentId ? ` (parent: ${parentId})` : ''}`);
 
-    // Build context prompt: always persist variables to disk and provide file paths
+    // Build context: create a manifest file and pass a single reference
+    const manifestPath = await this.createContextManifest(agentId, config.context);
     let contextPrompt = config.prompt;
-    for (const [name, ref] of Object.entries(config.context)) {
-      try {
-        const filePath = await this.store.persistForSubAgent(ref.key);
-        contextPrompt += `\n\nContext variable "${name}" (${ref.sizeBytes} bytes, type: ${ref.type}):`;
-        contextPrompt += `\nRead ${filePath}`;
-        contextPrompt += `\nThe JSON file has a "value" field with the data.`;
-      } catch {
-        contextPrompt += `\n\nContext variable "${name}" (ref: ${ref.key}): [not resolvable]`;
-      }
+    if (manifestPath) {
+      contextPrompt += `\n\nContext manifest: Read ${manifestPath}`;
+      contextPrompt += '\nThe JSON file maps variable names to '
+        + '{filePath, sizeBytes, type}. Read each filePath to access '
+        + 'the data (look in the "value" field of each JSON file).';
     }
 
     // Create and configure the agent
@@ -115,7 +125,22 @@ export class RecursiveSpawner implements IRecursiveSpawner {
 
     try {
       const agent = this.runtime.create(agentConfig);
-      const result = await this.runtime.run(agent);
+
+      let resultPromise: Promise<import('./types.js').AgentResult> = this.runtime.run(agent);
+
+      // Apply per-agent timeout if specified
+      if (config.timeout && config.timeout > 0) {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(
+              `Sub-agent ${agentId} timed out after ${config.timeout}ms`
+            ));
+          }, config.timeout);
+        });
+        resultPromise = Promise.race([resultPromise, timeoutPromise]);
+      }
+
+      const result = await resultPromise;
 
       // Store the result as a variable
       const resultKey = `sub-result-${agentId}`;
@@ -128,6 +153,7 @@ export class RecursiveSpawner implements IRecursiveSpawner {
       spawnedAgent.status = 'completed';
       spawnedAgent.tokenUsage = result.tokenUsage;
       spawnedAgent.resultRef = resultRef;
+      this.totalTokensUsed += result.tokenUsage.totalTokens;
 
       this.onLog(`Agent ${agentId} completed (iterations: ${result.iterations})`);
 
@@ -145,6 +171,11 @@ export class RecursiveSpawner implements IRecursiveSpawner {
       });
     } finally {
       this.activeConcurrent--;
+      // Wake up the next waiting spawner, if any
+      if (this.waitQueue.length > 0) {
+        const next = this.waitQueue.shift()!;
+        next();
+      }
     }
   }
 
@@ -260,14 +291,123 @@ export class RecursiveSpawner implements IRecursiveSpawner {
     return this.activeConcurrent;
   }
 
+  getTotalTokensUsed(): number {
+    return this.totalTokensUsed;
+  }
+
   reset(): void {
     this.spawnedAgents.clear();
     this.rootId = undefined;
     this.activeConcurrent = 0;
     this.currentDepth = 0;
+    this.totalTokensUsed = 0;
+    // Resolve any pending waiters (they will find slots available)
+    for (const resolve of this.waitQueue) {
+      resolve();
+    }
+    this.waitQueue = [];
+  }
+
+  /**
+   * Context decomposition: split a large variable into chunks,
+   * spawn a sub-agent per chunk with the same task, and merge.
+   *
+   * This is the primary pattern from the RLM paper.
+   */
+  async decompose(opts: {
+    /** The task/query for each sub-agent */
+    prompt: string;
+    /** The variable to decompose */
+    sourceRef: VariableRef;
+    /** Number of chunks to split into */
+    chunks: number;
+    /** Merge strategy for combining results */
+    mergeStrategy: MergeStrategy;
+    /** Optional model override */
+    model?: string;
+    /** Optional timeout per sub-agent */
+    timeout?: number;
+    /** Parent agent ID for tracking */
+    parentId?: string;
+    /** Current recursion depth */
+    depth?: number;
+  }): Promise<VariableRef> {
+    const sourceValue = await this.store.resolve(opts.sourceRef);
+    const sourceStr = typeof sourceValue === 'string'
+      ? sourceValue
+      : JSON.stringify(sourceValue);
+
+    // Split into roughly equal chunks
+    const chunkSize = Math.ceil(sourceStr.length / opts.chunks);
+    const configs: SpawnConfig[] = [];
+
+    for (let i = 0; i < opts.chunks; i++) {
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, sourceStr.length);
+      const chunk = sourceStr.slice(start, end);
+
+      const chunkKey = `chunk-${opts.sourceRef.key}-${i}`;
+      const chunkRef = await this.store.set(chunkKey, chunk, {
+        type: 'text',
+      });
+
+      configs.push({
+        prompt: opts.prompt,
+        context: { chunk: chunkRef },
+        model: opts.model,
+        timeout: opts.timeout,
+      });
+    }
+
+    const resultRefs = await this.spawnMany(
+      configs, opts.parentId, opts.depth
+    );
+    return this.merge(resultRefs, opts.mergeStrategy);
   }
 
   // --- Private helpers ---
+
+  private async createContextManifest(
+    agentId: string,
+    context: Record<string, VariableRef>,
+  ): Promise<string | null> {
+    if (Object.keys(context).length === 0) return null;
+
+    const manifest: Record<string, {
+      filePath: string;
+      sizeBytes: number;
+      type: string;
+    }> = {};
+
+    for (const [name, ref] of Object.entries(context)) {
+      try {
+        const filePath = await this.store.persistForSubAgent(ref.key);
+        manifest[name] = {
+          filePath,
+          sizeBytes: ref.sizeBytes,
+          type: ref.type,
+        };
+      } catch (err: unknown) {
+        const error = err as Error;
+        this.onLog(
+          `Warning: Could not persist context variable `
+            + `"${name}" for sub-agent: ${error.message}`
+        );
+        manifest[name] = {
+          filePath: '[not available]',
+          sizeBytes: 0,
+          type: ref.type,
+        };
+      }
+    }
+
+    const manifestKey = `manifest-${agentId}`;
+    await this.store.set(manifestKey, manifest, {
+      type: 'json',
+      persist: true,
+    });
+    return this.store.getFilePath(manifestKey);
+  }
 
   private buildTree(agentId: string, depth: number): AgentTree {
     const agent = this.spawnedAgents.get(agentId);
@@ -290,9 +430,9 @@ export class RecursiveSpawner implements IRecursiveSpawner {
     };
   }
 
-  private async waitForSlot(): Promise<void> {
-    while (this.activeConcurrent >= this.maxConcurrent) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+  private waitForSlot(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.waitQueue.push(resolve);
+    });
   }
 }

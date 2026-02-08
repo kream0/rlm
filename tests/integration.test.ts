@@ -58,6 +58,45 @@ describe('RLM Integration', () => {
       expect(result.iterations).toBe(1);
       expect(result.result).toContain('Analysis complete');
     });
+
+    it('should log agent execution to episodic memory', async () => {
+      const provider: LLMProvider = {
+        execute: vi.fn(async () => ({
+          result: 'Analysis done',
+        } as ExecutionResult)),
+      };
+
+      runtime = new AgentRuntime({ store, provider, memory });
+      const agent = runtime.create({
+        id: 'mem-agent', prompt: 'Analyze data', model: 'opus',
+      });
+      await runtime.run(agent);
+
+      const episodic = memory.getEpisodicMemory();
+      expect(episodic.length).toBeGreaterThan(0);
+      expect(
+        episodic.some(e => e.metadata?.agentId === 'mem-agent')
+      ).toBe(true);
+    });
+
+    it('should log agent failure to episodic memory', async () => {
+      const errorProvider: LLMProvider = {
+        execute: vi.fn(async () => { throw new Error('Provider failure'); }),
+      };
+
+      runtime = new AgentRuntime({ store, provider: errorProvider, memory });
+      const agent = runtime.create({
+        id: 'fail-agent', prompt: 'This will fail', model: 'opus',
+      });
+      await runtime.run(agent);
+
+      const episodic = memory.getEpisodicMemory();
+      expect(episodic.length).toBeGreaterThan(0);
+      const failEntry = episodic.find(e => e.metadata?.agentId === 'fail-agent');
+      expect(failEntry).toBeDefined();
+      expect(failEntry!.metadata?.status).toBe('failed');
+      expect(failEntry!.content).toContain('Provider failure');
+    });
   });
 
   describe('Memory lifecycle', () => {

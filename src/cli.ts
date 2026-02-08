@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ContextStore } from './context-store.js';
 import { MemoryManager } from './memory-manager.js';
+import { FunctionRegistry } from './function-registry.js';
 import { AgentRuntime } from './agent-runtime.js';
 import { RecursiveSpawner } from './recursive-spawner.js';
 import { ClaudeCodeProvider } from './claude-code-provider.js';
@@ -41,9 +42,13 @@ async function createSystem(config: RLMConfig) {
   const memory = new MemoryManager(resolve(config.storageDir, 'memory'));
   await memory.init();
 
+  const registry = new FunctionRegistry();
+
   const runtime = new AgentRuntime({
     provider,
     store,
+    memory,
+    functions: registry,
     onLog: (agentId, msg) => log(`[${agentId.slice(0, 8)}] ${msg}`, config.verbose),
   });
 
@@ -53,10 +58,11 @@ async function createSystem(config: RLMConfig) {
     defaultModel: config.model,
     maxDepth: config.maxDepth,
     maxConcurrent: config.maxConcurrent,
+    tokenBudget: config.tokenBudget,
     onLog: (msg) => log(msg, config.verbose),
   });
 
-  return { store, memory, runtime, spawner, provider };
+  return { store, memory, runtime, spawner, provider, registry };
 }
 
 export async function run(task: string, options?: RunOptions): Promise<AgentResult> {

@@ -35,7 +35,8 @@ Key design: AgentRuntime does not drive a REPL loop. Claude Code sub-processes h
 
 ## Commands
 - `bun run build` - Build the project
-- `bun test` - Run all tests
+- `bun run test` - Run all tests (uses vitest)
+- Do NOT use `bun test` directly -- it uses Bun's native runner which lacks vi.mock support
 - `bun run lint` - Type check
 - `bun run dev -- run "<task>"` - Run a task via CLI
 - `bun run demo` - Run feature demonstration
@@ -52,3 +53,21 @@ Key design: AgentRuntime does not drive a REPL loop. Claude Code sub-processes h
 - The context store is the source of truth for all shared state
 - Sub-agents are headless `claude -p` processes - no user interaction from sub-agents
 - LLMProvider interface uses `execute()` returning `ExecutionResult` (not multi-turn chat)
+- Use dependency injection over module-level mocking (e.g., `spawnFn` option instead of `vi.mock`)
+- Never swallow errors silently - log via `onLog` callback or `process.stderr.write`
+
+## Session Workflow
+- Use Opus agents for research/analysis/implementation to protect main context window
+- Launch independent agents in parallel for maximum throughput
+- Track progress in TODO.md (priorities), LAST_SESSION.md (history), BACKLOG.md (roadmap)
+- Run `bun run test` and `bun run lint` after every implementation phase
+- Update tracking files at end of session
+
+## Key Files
+- `PLAN.md` - Detailed implementation plan (completed phases 1-4)
+- `TODO.md` - Current priorities with Quick Resume section
+- `LAST_SESSION.md` - Session history log
+- `BACKLOG.md` - Long-term roadmap by theme
+- `specs/ARCHITECTURE.md` - Architecture documentation with paper comparison
+- `specs/rlm-adk-google.md` - Google ADK RLM discussion (reference)
+- `specs/2512.24601v2.pdf` - Original RLM paper by Zhang et al. (MIT)

@@ -3,13 +3,8 @@ import { ClaudeCodeProvider } from '../src/claude-code-provider.js';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 
-// Mock child_process.spawn
-vi.mock('node:child_process', () => ({
-  spawn: vi.fn(),
-}));
-
-import { spawn } from 'node:child_process';
-const mockSpawn = vi.mocked(spawn);
+// Inject spawnFn via constructor instead of vi.mock
+const mockSpawn = vi.fn();
 
 function createMockProcess(
   stdout: string,
@@ -86,7 +81,7 @@ describe('ClaudeCodeProvider', () => {
 
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
-      const provider = new ClaudeCodeProvider({ model: 'sonnet' });
+      const provider = new ClaudeCodeProvider({ model: 'sonnet', spawnFn: mockSpawn as any });
       const response = await provider.execute({
         prompt: 'Analyze this data',
       });
@@ -117,6 +112,7 @@ describe('ClaudeCodeProvider', () => {
         model: 'opus',
         maxBudgetUsd: 2.5,
         permissionMode: 'plan',
+        spawnFn: mockSpawn as any,
       });
 
       await provider.execute({
@@ -146,7 +142,7 @@ describe('ClaudeCodeProvider', () => {
 
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
-      const provider = new ClaudeCodeProvider();
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
       await provider.execute({
         prompt: 'Analyze the code and report findings',
       });
@@ -166,7 +162,7 @@ describe('ClaudeCodeProvider', () => {
 
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
-      const provider = new ClaudeCodeProvider({ model: 'sonnet' });
+      const provider = new ClaudeCodeProvider({ model: 'sonnet', spawnFn: mockSpawn as any });
       await provider.execute({
         prompt: 'test',
         model: 'opus',
@@ -180,7 +176,7 @@ describe('ClaudeCodeProvider', () => {
     it('should handle non-zero exit code', async () => {
       mockSpawn.mockReturnValueOnce(createMockProcess('', 'Error: auth failed', 1));
 
-      const provider = new ClaudeCodeProvider();
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
 
       await expect(provider.execute({
         prompt: 'test',
@@ -190,7 +186,7 @@ describe('ClaudeCodeProvider', () => {
     it('should handle invalid JSON output', async () => {
       mockSpawn.mockReturnValueOnce(createMockProcess('not valid json', '', 0));
 
-      const provider = new ClaudeCodeProvider();
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
 
       await expect(provider.execute({
         prompt: 'test',
@@ -215,7 +211,7 @@ describe('ClaudeCodeProvider', () => {
 
       mockSpawn.mockReturnValueOnce(proc as ChildProcess);
 
-      const provider = new ClaudeCodeProvider();
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
 
       await expect(provider.execute({
         prompt: 'test',
@@ -240,7 +236,7 @@ describe('ClaudeCodeProvider', () => {
 
       mockSpawn.mockReturnValueOnce(proc as ChildProcess);
 
-      const provider = new ClaudeCodeProvider({ timeout: 50 });
+      const provider = new ClaudeCodeProvider({ timeout: 50, spawnFn: mockSpawn as any });
 
       await expect(provider.execute({
         prompt: 'test',
@@ -255,7 +251,7 @@ describe('ClaudeCodeProvider', () => {
 
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
-      const provider = new ClaudeCodeProvider();
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
       const response = await provider.execute({
         prompt: 'test',
       });
@@ -276,12 +272,74 @@ describe('ClaudeCodeProvider', () => {
 
       mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
 
-      const provider = new ClaudeCodeProvider();
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
       const response = await provider.execute({
         prompt: 'test',
       });
 
       expect(JSON.parse(response.result)).toEqual({ key: 'value', nested: [1, 2, 3] });
+    });
+
+    it('should parse token usage from modelUsage', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'done',
+        modelUsage: {
+          'claude-opus-4-6': {
+            inputTokens: 100,
+            outputTokens: 50,
+            cacheReadInputTokens: 200,
+            cacheCreationInputTokens: 300,
+            costUSD: 0.05,
+          },
+        },
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
+      const response = await provider.execute({ prompt: 'test' });
+
+      expect(response.tokenUsage).toEqual({
+        inputTokens: 600, // 100 + 200 + 300
+        outputTokens: 50,
+        totalTokens: 650,
+      });
+    });
+
+    it('should parse token usage from top-level usage when modelUsage is absent', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'done',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_input_tokens: 200,
+          cache_creation_input_tokens: 300,
+        },
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
+      const response = await provider.execute({ prompt: 'test' });
+
+      expect(response.tokenUsage).toEqual({
+        inputTokens: 600, // 100 + 200 + 300
+        outputTokens: 50,
+        totalTokens: 650,
+      });
+    });
+
+    it('should not include tokenUsage when neither modelUsage nor usage is present', async () => {
+      const output = JSON.stringify({
+        type: 'result',
+        result: 'done',
+      });
+
+      mockSpawn.mockReturnValueOnce(createMockProcess(output, '', 0));
+      const provider = new ClaudeCodeProvider({ spawnFn: mockSpawn as any });
+      const response = await provider.execute({ prompt: 'test' });
+
+      expect(response.tokenUsage).toBeUndefined();
     });
   });
 });

@@ -104,7 +104,9 @@ describe('ContextStore', () => {
     });
 
     it('should not throw when deleting non-existent key', async () => {
-      await expect(store.delete('nonexistent')).resolves.not.toThrow();
+      // Verify delete resolves without error (compatible with both vitest and bun test)
+      const result = await store.delete('nonexistent');
+      expect(result).toBeUndefined();
     });
   });
 

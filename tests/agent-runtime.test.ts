@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AgentRuntime } from '../src/agent-runtime.js';
 import { ContextStore } from '../src/context-store.js';
+import { FunctionRegistry } from '../src/function-registry.js';
+import { MemoryManager } from '../src/memory-manager.js';
 import { resolve } from 'node:path';
 import { rm } from 'node:fs/promises';
 import type { LLMProvider, ExecutionResult } from '../src/types.js';
@@ -163,7 +165,7 @@ describe('AgentRuntime', () => {
     expect((result.result as Record<string, unknown>).error).toContain('rate limit');
   });
 
-  it('should store result in context store', async () => {
+  it('should not store result in context store (delegated to RecursiveSpawner)', async () => {
     const provider = createMockProvider('Task result');
 
     const runtime = new AgentRuntime({
@@ -171,13 +173,28 @@ describe('AgentRuntime', () => {
     });
 
     const agent = runtime.create({
-      id: 'store-result', prompt: 'Do work',
+      id: 'no-store', prompt: 'Do work',
       model: 'claude-sonnet-4-5-20250929',
     });
 
     await runtime.run(agent);
-    const stored = await store.get('agent-result-store-result');
-    expect(stored).toBe('Task result');
+    expect(store.has('agent-result-no-store')).toBe(false);
+  });
+
+  it('should propagate token usage from provider', async () => {
+    const provider: LLMProvider = {
+      execute: vi.fn(async () => ({
+        result: 'Done',
+        tokenUsage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      } as ExecutionResult)),
+    };
+
+    const runtime = new AgentRuntime({ store, provider });
+    const agent = runtime.create({ id: 'token-agent', prompt: 'Test', model: 'opus' });
+    const result = await runtime.run(agent);
+
+    expect(result.tokenUsage).toEqual({ inputTokens: 100, outputTokens: 50, totalTokens: 150 });
+    expect(agent.tokenUsage).toEqual({ inputTokens: 100, outputTokens: 50, totalTokens: 150 });
   });
 
   it('should pass model to provider', async () => {
@@ -195,5 +212,69 @@ describe('AgentRuntime', () => {
     await runtime.run(agent);
     const executeCall = (provider.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(executeCall.model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('should include function descriptions in prompt', async () => {
+    const provider = createMockProvider('Done');
+    const registry = new FunctionRegistry();
+    registry.register({
+      name: 'analyzeData',
+      description: 'Analyze a dataset',
+      parameters: {
+        input: { type: 'string', description: 'The input data', required: true },
+        format: { type: 'string', description: 'Output format', required: false },
+      },
+      handler: async () => 'result',
+    });
+
+    const runtime = new AgentRuntime({
+      store, provider, functions: registry,
+      onLog: (_id, msg) => logs.push(msg),
+    });
+
+    const agent = runtime.create({
+      id: 'fn-agent', prompt: 'Use functions',
+      model: 'opus',
+    });
+
+    await runtime.run(agent);
+    const executeCall = (provider.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(executeCall.prompt).toContain('Available functions');
+    expect(executeCall.prompt).toContain('analyzeData');
+    expect(executeCall.prompt).toContain('Analyze a dataset');
+    expect(executeCall.prompt).toContain('input: string');
+  });
+
+  it('should inject relevant episodic memory into prompt', async () => {
+    const memDir = resolve('.rlm-test-data-runtime-mem');
+    const memory = new MemoryManager(memDir);
+    await memory.init();
+
+    // Pre-populate episodic memory
+    await memory.append('episodic', {
+      id: 'past-1',
+      timestamp: Date.now(),
+      content: 'Agent past-task completed: Analyzed customer data successfully',
+      metadata: { agentId: 'past-task', status: 'completed' },
+    });
+
+    const provider = createMockProvider('Done');
+    const runtime = new AgentRuntime({
+      store, provider, memory,
+      onLog: (_id, msg) => logs.push(msg),
+    });
+
+    const agent = runtime.create({
+      id: 'mem-prompt-agent', prompt: 'Analyze customer data',
+      model: 'opus',
+    });
+
+    await runtime.run(agent);
+    const executeCall = (provider.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(executeCall.prompt).toContain('Relevant past agent executions');
+    expect(executeCall.prompt).toContain('customer data');
+
+    await memory.clear();
+    try { await rm(memDir, { recursive: true, force: true }); } catch {}
   });
 });
